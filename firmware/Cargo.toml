@@ -1,0 +1,9 @@
+[package]
+name = "firmware"
+version = "0.1.0"
+authors = ["Liu Xiaoyi <circuitcoder0@gmail.com>"]
+edition = "2018"
+
+[[bin]]
+name = "firmware"
+path = "src/firmware.rs"
