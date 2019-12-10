@@ -19,7 +19,7 @@ inspect: target/$(TARGET)/release/firmware
 
 firmware.bin: target/$(TARGET)/release/firmware modifier
 	$(PREFIX)objcopy -O binary $< $@
-	./modifier $@
+	# ./modifier $@
 
 modifier: util/modifier.c
 	$(CC) util/modifier.c -o modifier -g

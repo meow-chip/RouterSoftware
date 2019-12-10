@@ -5,9 +5,9 @@ const SERIAL_WRITE: usize = SERIAL_READ+4;
 
 pub fn hprint_char(c: u8) {
     unsafe { core::ptr::write_volatile(SERIAL_WRITE as *mut u8, c); }
-    // Spin for at least 10,000 cycles, which should be enough for a 56K baud-rate serial connection
     let mut i = 0;
-    while i < 1000 {
+    // TODO: use int
+    while i < 100000 {
         unsafe {
             core::ptr::write_volatile(0 as *mut u8, 0);
         }

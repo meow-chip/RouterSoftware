@@ -12,10 +12,6 @@ static BOOTMSG: &'static str = "Hello, MeowRouter!\n\r";
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     hprint(BOOTMSG);
-    for c in b'a'..=b'z' {
-        hprint_char(c);
-    }
-    hprint_char(b'\n');
 
     loop {}
 }

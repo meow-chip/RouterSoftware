@@ -1,5 +1,6 @@
 MEMORY {
   RAM : ORIGIN = 0x0, LENGTH = 8M
+  FLASH: ORIGIN = 0xFFFF20000000, LENGTH = 8M
 }
 
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
@@ -7,18 +8,14 @@ _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 ENTRY(_start)
 
 SECTIONS {
-  .vector_table ORIGIN(RAM) : {
-    QUAD(LENGTH(RAM));
-  } > RAM
-
   .text : {
-    . = 0x1000;
+    . = 0xFFFF20000000;
     *.(.text .text.*);
-  } > RAM
+  } > FLASH
 
   .rodata : {
     *.(.rodata .rodata.*);
-  } > RAM
+  } > FLASH
 
   /DISCARD/ : {
     *(.debug_* .debug_*.*);
