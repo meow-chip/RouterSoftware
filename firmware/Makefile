@@ -1,28 +1,34 @@
 .PHONY: clean all inspect
 
 TARGET ?= riscv64imac-unknown-none-elf
-PREFIX ?= riscv64-linux-gnu-
+PREFIX ?= riscv64-unknown-elf-
 
 SRCS=$(shell find src -type f -name '*.rs')
 
-all: firmware.hex
+all: firmware.bin
 
-target/$(TARGET)/release/firmware: $(SRCS) firmware.ld
-	cargo rustc --target $(TARGET) --release -- -C link-arg=-Tfirmware.ld
+target/$(TARGET)/release/libfirmware.a: $(SRCS) firmware.ld
+	cargo rustc --target $(TARGET) --release
 
-clean:
-	cargo clean
-	rm -f *.coe *.bin
+env.o: env.S
+	$(PREFIX)as -march=rv64imac -o env.o env.S
 
-inspect: target/$(TARGET)/release/firmware
-	riscv64-linux-gnu-objdump -D target/$(TARGET)/release/firmware
+firmware.o: target/$(TARGET)/release/libfirmware.a env.o
+	$(PREFIX)ld -T firmware.ld env.o target/$(TARGET)/release/libfirmware.a -o firmware.o
 
-firmware.bin: target/$(TARGET)/release/firmware modifier
+firmware.bin: firmware.o
 	$(PREFIX)objcopy -O binary $< $@
 	# ./modifier $@
 
 firmware.hex: firmware.bin
 	hexdump -ve '1/1 "%02x" "\n"' firmware.bin > firmware.hex
 
-modifier: util/modifier.c
-	$(CC) util/modifier.c -o modifier -g
+clean:
+	cargo clean
+	rm -f *.coe *.bin *.o *.hex
+
+inspect: firmware.o
+	riscv64-linux-gnu-objdump -D firmware.o
+
+# modifier: util/modifier.c
+#	$(CC) util/modifier.c -o modifier -g

@@ -1,3 +1,5 @@
 target/
 modifier
 firmware.hex
+*.bin
+*.o

@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Liu Xiaoyi <circuitcoder0@gmail.com>"]
 edition = "2018"
 
-[[bin]]
+[lib]
 name = "firmware"
 path = "src/firmware.rs"
+crate-type = ["staticlib"]

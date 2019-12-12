@@ -1,5 +1,3 @@
-#![feature(link_args)]
-
 #![no_std]
 #![no_main]
 

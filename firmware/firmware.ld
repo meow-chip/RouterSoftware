@@ -1,15 +1,15 @@
 MEMORY {
-  RAM : ORIGIN = 0x0, LENGTH = 8M
-  FLASH: ORIGIN = 0xFFFF20000000, LENGTH = 8M
+  FLASH(RX) : ORIGIN = 0xFFFF20000000, LENGTH = 8M
+  RAM(RWX) : ORIGIN = 0x0, LENGTH = 8M
 }
 
 _stack_start = ORIGIN(RAM) + LENGTH(RAM);
 
-ENTRY(_start)
+ENTRY(_rst_vec)
 
 SECTIONS {
   .text : {
-    . = 0xFFFF20000000;
+    . = 0x0;
     *.(.text .text.*);
   } > FLASH
 
