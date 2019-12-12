@@ -1,18 +1,17 @@
 // const FREQ: u64 = 50_000_000;
 
-const SERIAL_READ: usize = 0xFFFFF0000000;
-const SERIAL_WRITE: usize = SERIAL_READ+4;
+const SERIAL_BASE: usize = 0xFFFF00000000;
+const SERIAL_RW: usize = SERIAL_BASE + 0x1000;
+
+pub fn hprint_setup() {
+    // Enable fifo
+    unsafe { core::ptr::write_volatile((SERIAL_BASE + 8) as *mut u64, 1); }
+
+    // TODO: enable interrupt
+}
 
 pub fn hprint_char(c: u8) {
-    unsafe { core::ptr::write_volatile(SERIAL_WRITE as *mut u8, c); }
-    let mut i = 0;
-    // TODO: use int
-    while i < 100000 {
-        unsafe {
-            core::ptr::write_volatile(0 as *mut u8, 0);
-        }
-        i += 1;
-    }
+    unsafe { core::ptr::write_volatile(SERIAL_RW as *mut u8, c); }
 }
 
 pub fn hprint_bytes(cs: &[u8]) {

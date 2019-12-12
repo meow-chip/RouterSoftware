@@ -1,7 +1,11 @@
+#![feature(asm)]
+
 #![no_std]
-#![no_main]
 
 mod util;
+mod buf;
+
+use buf::BufState;
 
 use util::*;
 
@@ -9,9 +13,26 @@ static BOOTMSG: &'static str = "Hello, MeowRouter!\n\r";
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    hprint_setup();
     hprint(BOOTMSG);
 
-    loop {}
+    let mut buf_handle = buf::get_buf();
+
+    // Main loop
+    loop {
+        // Polls recv buf
+
+        match buf_handle.probe() {
+            BufState::Incoming => {
+                hprint("R");
+                buf_handle.drop();
+            },
+            BufState::Outgoing => {
+                unreachable!()
+            },
+            BufState::Vacant => {},
+        }
+    }
 }
 
 use core::panic::PanicInfo;
