@@ -5,9 +5,12 @@
 mod util;
 mod buf;
 mod data;
+mod nc;
+mod cmd;
 
 use buf::*;
 use data::arp::*;
+use cmd::*;
 
 use util::*;
 
@@ -19,6 +22,23 @@ pub unsafe extern "C" fn _start() -> ! {
     hprint(BOOTMSG);
 
     let mut buf_handle = buf::rst_buf();
+
+    let mut ncache = nc::NeighboorCache::default();
+
+    // Initialize
+    for vlan in 0..=4 {
+        Cmd {
+            op: Op::SetIP,
+            idx: vlan,
+            data: [1, vlan, 168, 192, 0, 0],
+        }.send();
+
+        Cmd {
+            op: Op::SetMAC,
+            idx: vlan,
+            data: [vlan, 0, 0, 0, 0, 1],
+        }.send();
+    }
 
     // Main loop
     loop {
@@ -33,11 +53,24 @@ pub unsafe extern "C" fn _start() -> ! {
                         let mut arp = core::ptr::read_volatile(ptr);
                         match arp.op {
                             Oper::Reply => {
-                                hprint("ARp\n\r");
+                                let port = buf_handle.port();
+                                hprint("ARP reply: ");
+                                hprint_ip(&arp.spa);
+                                hprint(" @ ");
+                                hprint_mac(&arp.sha);
+                                hprint(" <- ");
+                                hprint_dec(port as u64);
+                                hprint("\n\r");
+
+                                if ncache.lookup(&arp.spa).is_none() {
+                                    ncache.put(arp.spa, arp.sha, buf_handle.port());
+                                }
+
                                 buf_handle.drop();
                             },
                             Oper::Req => {
-                               hprint("ARq\n\r");
+                                hprint("ARP request");
+
                                 arp.tpa = arp.spa;
                                 arp.tha = arp.sha;
                                 arp.spa = [10, 0, 4, 1];
@@ -51,11 +84,13 @@ pub unsafe extern "C" fn _start() -> ! {
                                 buf_handle.write_src([0,0,0,0,0,4]);
 
                                 buf_handle.send();
+
+                                // TODO: place src arp into cache
                             },
                         }
                     },
                     ParsedBufHandle::Unknown => {
-                        // hprint("IU\n\r");
+                        hprint("Unknown Incoming Packet:\n\r");
                         buf_handle.dump();
                         buf_handle.drop();
                     }
@@ -67,8 +102,11 @@ pub unsafe extern "C" fn _start() -> ! {
             BufState::Vacant => {
                 // Spin
             },
-            _ => {
-                // hprint("U\n\r");
+            BufState::ARPMiss => {
+                hprint("ARP miss packet\n\r");
+            },
+            BufState::ForwardMiss => {
+                hprint("Forward miss packet\n\r");
                 buf_handle.drop();
             }
         }
@@ -78,8 +116,11 @@ pub unsafe extern "C" fn _start() -> ! {
 use core::panic::PanicInfo;
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    hprint("PANIC\n\r");
+fn panic(info: &PanicInfo) -> ! {
+    hprint("PANIC:\n\r");
+    let ps = info.payload().downcast_ref::<&str>().unwrap();
+    hprint(ps);
+
     loop {}
 }
 

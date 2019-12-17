@@ -52,6 +52,30 @@ pub fn hprint_hex(s: &[u8]) {
     }
 }
 
+pub fn hprint_dec(mut n: u64) {
+    if n == 0 {
+        hprint("0");
+        return;
+    }
+
+    let mut buf = [0u8; 20];
+    let mut ptr: usize = 0;
+    while n != 0 {
+        buf[ptr] = (n % 10) as u8 + '0' as u8;
+        n /= 10;
+        ptr += 1;
+    }
+
+    loop {
+        ptr -= 1;
+        hprint_char(buf[ptr]);
+
+        if ptr == 0 {
+            break;
+        }
+    }
+}
+
 pub fn hprint_mac(s: &[u8;6]) {
     for i in 0..5 {
         hprint_hex_byte(s[i]);
@@ -59,4 +83,13 @@ pub fn hprint_mac(s: &[u8;6]) {
     }
 
     hprint_hex_byte(s[5]);
+}
+
+pub fn hprint_ip(s: &[u8; 4]) {
+    for i in 0..3 {
+        hprint_dec(s[i] as u64);
+        hprint(".");
+    }
+
+    hprint_dec(s[3] as u64);
 }

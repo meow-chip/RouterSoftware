@@ -70,8 +70,8 @@ impl BufHandle {
         unsafe { core::ptr::read_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 6) as *const [u8;6]) }
     }
 
-    pub fn port(&self) -> u16 {
-        unsafe { core::ptr::read_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *const u16) }
+    pub fn port(&self) -> u8 {
+        (unsafe { core::ptr::read_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *const u16) }) as u8
     }
 
     pub fn write_dest(&self, mac: [u8;6]) {
@@ -82,8 +82,8 @@ impl BufHandle {
         unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 6) as *mut [u8;6], mac); }
     }
 
-    pub fn write_port(&self, port: u16) {
-        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *mut u16, port); }
+    pub fn write_port(&self, port: u8) {
+        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *mut u16, port as u16); }
     }
 
     fn write_state(&mut self, state: BufState) {
