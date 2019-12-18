@@ -6,6 +6,8 @@
 typedef uint32_t in_addr_t;
 typedef uint8_t macaddr_t[6];
 
+#define min(a, b) ((a) < (b) ? a : b)
+
 /**
  * @brief 从 ARP 表中查询 IPv4 对应的 MAC 地址
  *
@@ -229,20 +231,21 @@ bool forward(uint8_t *packet, size_t len) {
 }
 
 inline uint32_t len_to_mask(int len) {
-  return (uint32_t)(((uint64_t)(1) << len) - 1);
+    return (uint32_t)(((uint64_t)(1) << len) - 1);
 }
 
-inline void broadtable(RipPacket *p, int if_index) {
+inline void broadtable(RipPacket *p, int if_index, uint32_t res) {
     p->command = 0x2;
-    p->numEntries = table_num;
-    for (int i = 0; i < table_num; i++) {
-        p->entries[i] = {
+    p->numEntries = min(table_num - res, RIP_MAX_ENTRY);
+    for (int i = res; i < res + p->numEntries; i++) {
+        p->entries[i - res] = {
             .addr = table[i].addr,
             .mask = len_to_mask(table[i].len),
             .nexthop = table[i].nexthop,
             .metric = (if_index != table[i].if_index ? table[i].metric + 1 : 16)
         };
     }
+    res += p->numEntries;
 }
 
 inline uint32_t count_bit(uint32_t a) {
@@ -257,6 +260,7 @@ inline uint32_t count_bit(uint32_t a) {
 inline bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output) {
     if ((len - 32) % 20 != 0) return false;
     output->numEntries = (len - 32) / 20;
+    if (output->numEntries > RIP_MAX_ENTRY) return false;
     if (packet[28] != 1 && packet[28] != 2) return false;
     if (packet[29] != 2) return false;
     for (int i = 0; i < (len - 32) / 20; i++) {
@@ -319,11 +323,14 @@ int Meow_PerSec(uint64_t usec) {
     if (now > usec + 5 * 1000) { // timeout
         for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
             RipPacket p;
-            broadtable(&p, i);
-            RIPAssemble(output + 20 + 8, out_len = 0, &p);
-            UDPHeaderAssemble(output + 20, out_len, 520, 520);
-            IPHeaderAssemble(output, out_len, addrs[i], multicasting_ip);
-            Meow_SendIPPacket(output, out_len, i, multicasting_mac);
+            uint32_t res = 0;
+            while (res < table_num) {
+                broadtable(&p, i, res);
+                RIPAssemble(output + 20 + 8, out_len = 0, &p);
+                UDPHeaderAssemble(output + 20, out_len, 520, 520);
+                IPHeaderAssemble(output, out_len, addrs[i], multicasting_ip);
+                Meow_SendIPPacket(output, out_len, i, multicasting_mac);
+            }
         }
         now = usec;
     }
@@ -338,11 +345,14 @@ int Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int 
     if (disassemble((uint8_t *)packet, length, &rip)) {
         if (rip.command == 1) { // receive a request packet
             RipPacket p;
-            broadtable(&p, if_index);
-            RIPAssemble(output + 20 + 8, out_len = 0, &p);
-            UDPHeaderAssemble(output + 20, out_len, 520, 520);
-            IPHeaderAssemble(output, out_len, addrs[if_index], src_addr);
-            Meow_SendIPPacket(output, out_len, if_index, src_mac);
+            uint32_t res = 0;
+            while (res < table_num) {
+                broadtable(&p, if_index, res);
+                RIPAssemble(output + 20 + 8, out_len = 0, &p);
+                UDPHeaderAssemble(output + 20, out_len, 520, 520);
+                IPHeaderAssemble(output, out_len, addrs[if_index], src_addr);
+                Meow_SendIPPacket(output, out_len, if_index, src_mac);
+            }
             // TODO: set a flag, wait for response
         } else {  // receive a response packet
             RipPacket p;
