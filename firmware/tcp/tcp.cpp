@@ -1,3 +1,5 @@
+#include <stdint.h>
+
 enum TCPStatus {
     CLOSED,
     LISTEN,
@@ -13,15 +15,18 @@ enum TCPStatus {
 } status;
 
 enum TCPFlag {
-    SYN = 1,
+    URG = 1,
     ACK = 2,
-    FIN = 4,
+    PSH = 4,
     RST = 8,
+    SYN = 16,
+    FIN = 32,
 };
 
-extern void send(unsigned int flag);
+extern void send(uint32_t flag);
 
-void receive(unsigned int flag) {
+void receive(uint8_t *packet) {
+    uint32_t flag = (packet[14] >> 2); 
     switch (status) {
     case CLOSED:
         // active open
