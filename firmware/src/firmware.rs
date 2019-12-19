@@ -1,4 +1,5 @@
 #![feature(asm)]
+#![feature(const_generics)]
 
 #![no_std]
 
@@ -7,6 +8,8 @@ mod buf;
 mod data;
 mod nc;
 mod cmd;
+mod routing;
+mod forward;
 
 use buf::*;
 use data::arp::*;
