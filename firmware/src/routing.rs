@@ -1,3 +1,5 @@
+use core::ptr::NonNull;
+
 pub type IPAddr = [u8; 4];
 
 const TRIE_BITLEN: u8 = 4;
@@ -29,39 +31,37 @@ pub struct Rule {
     next: IPAddr,
 }
 
-#[derive(Default)]
-pub struct Trie<'a> {
-    next: [Option<&'a mut Trie<'a>>; 1 << TRIE_BITLEN],
+#[derive(Default, Clone, Copy)]
+pub struct Trie {
+    next: [Option<NonNull<Trie>>; 1 << TRIE_BITLEN],
     value: Option<IPAddr>,
 }
 
-impl<'a> Trie<'a> {
+impl Trie {
     /**
      * Rules should be sorted based on their length
      */
 
-    fn from_rules<const LEN: usize>(store: &'a mut TrieBuf<'a, {LEN}>, rules: &[Rule]) -> &'a Trie<'a> {
-        let root = store.alloc();
-        root.value = None;
-        root.next = [None; 1 << TRIE_BITLEN];
+    pub fn from_rules<'a, const LEN: usize>(store: &'a mut TrieBuf<{LEN}>, rules: &[Rule]) -> &'a Trie {
+        let mut root = store.alloc();
+        let root_ref = unsafe { root.as_mut() };
 
         for rule in rules {
-            root.apply_rule(store, rule, 0);
+            root_ref.apply_rule(store, rule, 0);
         }
 
-        root
+        unsafe { &*root.as_ptr() }
     }
 
-    fn apply_rule<const LEN: usize>(&mut self, store: &'a mut TrieBuf<'a, {LEN}>, rule: &Rule, depth: u8) {
-
+    fn apply_rule<const LEN: usize>(&mut self, store: &mut TrieBuf<{LEN}>, rule: &Rule, depth: u8) {
         if depth >= rule.len {
             self.value = Some(rule.next);
         } else {
-            let bitmask = (ip_to_u32(&rule.prefix) >> depth) & ((1 << TRIE_BITLEN) - 1);
+            let bitmask = (ip_to_u32(&rule.prefix) >> (32 - TRIE_BITLEN - depth)) & ((1 << TRIE_BITLEN) - 1);
             let left = rule.len - depth;
 
             if left >= TRIE_BITLEN as u8 {
-                let n = if let Some(n) = self.next[bitmask as usize] {
+                let mut n = if let Some(n) = self.next[bitmask as usize] {
                     n
                 } else {
                     let ptr = store.alloc();
@@ -69,12 +69,13 @@ impl<'a> Trie<'a> {
                     ptr
                 };
 
-                n.apply_rule(store, rule, depth + TRIE_BITLEN);
+                unsafe { n.as_mut() }.apply_rule(store, rule, depth + TRIE_BITLEN);
             } else {
                 let filled = TRIE_BITLEN - left;
                 for i in 0..(1 << filled) {
-                    let idx = ((bitmask >> filled) << filled) & i;
-                    let n = if let Some(n) = self.next[idx as usize] {
+                    let idx = ((bitmask >> filled) << filled) | i;
+                    // println!("IDX: {}", idx);
+                    let mut n = if let Some(n) = self.next[idx as usize] {
                         n
                     } else {
                         let ptr = store.alloc();
@@ -82,38 +83,49 @@ impl<'a> Trie<'a> {
                         ptr
                     };
 
-                    n.apply_rule(store, rule, depth + TRIE_BITLEN);
+                    unsafe { n.as_mut() }.apply_rule(store, rule, depth + TRIE_BITLEN);
                 }
             }
         }
     }
 
-    fn lookup(&self, addr: &IPAddr, depth: u8) -> Option<IPAddr> {
+    pub fn lookup(&self, addr: &IPAddr, depth: u8) -> Option<IPAddr> {
         if depth == 32 {
             return self.value;
         }
 
-        let idx = (ip_to_u32(addr) >> depth) & ((1 << TRIE_BITLEN) - 1);
-        self.next[idx as usize]
-            .and_then(|n| n.lookup(addr, depth+TRIE_BITLEN))
-            .or(self.value.clone())
+        let idx = (ip_to_u32(addr) >> (32 - TRIE_BITLEN - depth)) & ((1 << TRIE_BITLEN) - 1);
+        // println!("IDX: {}", idx);
+        let result = self.next[idx as usize]
+            .and_then(|n| unsafe { n.as_ref() }.lookup(addr, depth+TRIE_BITLEN))
+            .or(self.value.clone());
+        result
     }
 }
 
-pub struct TrieBuf<'a, const LEN: usize> {
-    store: [Trie<'a>; LEN],
+pub struct TrieBuf<const LEN: usize> {
+    store: [Trie; LEN],
     ptr: usize,
 }
 
-impl<'a, const LEN: usize> TrieBuf<'a, {LEN}> {
+impl<const LEN: usize> TrieBuf<{LEN}> {
+    fn from(store: [Trie; LEN]) -> Self {
+        Self {
+            store,
+            ptr: 0,
+        }
+    }
+
     fn reset(&mut self) {
         self.ptr = 0;
     }
 
-    fn alloc(&'a mut self) -> &'a mut Trie<'a> {
+    fn alloc(&mut self) -> NonNull<Trie> {
         let ret = &mut self.store[self.ptr];
+        ret.value = None;
+        ret.next = [None; 1 << TRIE_BITLEN];
         self.ptr += 1;
-        ret
+        NonNull::new(ret).unwrap()
     }
 }
 
@@ -140,11 +152,37 @@ fn test_routing() {
             len: 0,
             next: [192,168,4,1],
         },
+        Rule {
+            prefix: [10,0,1,255],
+            len: 31,
+            next: [192,168,5,1],
+        },
     ];
 
-    rules.sort_by(|a, b| b.len.cmp(&a.len));
+    rules.sort_by(|a, b| a.len.cmp(&b.len));
 
     for i in rules.iter() {
-        println!("{}", i.len);
+        println!("len: {}", i.len);
+    }
+
+    let buf = [Default::default(); 1024];
+    let mut trie_buf = TrieBuf::from(buf);
+    let trie = Trie::from_rules(&mut trie_buf, &rules);
+
+    let cases = [
+        ([1,2,3,4], [192,168,4,1]),
+        ([10,1,2,3], [192,168,4,1]),
+        ([10,0,2,3], [192,168,2,1]),
+        ([10,0,1,1], [192,168,1,1]),
+        ([10,0,4,3], [192,168,3,1]),
+        ([10,0,100,3], [192,168,3,1]),
+        ([10,0,1,255], [192,168,5,1]),
+        ([10,0,1,254], [192,168,5,1]),
+        ([10,0,1,253], [192,168,1,1]),
+    ];
+
+    for (from, to) in cases.iter() {
+        println!("Testing from {:?}", from);
+        assert_eq!(trie.lookup(from, 0).as_ref(), Some(to));
     }
 }

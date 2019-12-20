@@ -24,6 +24,7 @@ use util::*;
 
 static BOOTMSG: &'static str = "BOOT\n\rHello, MeowRouter!\n\r";
 
+#[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn _start() -> ! {
     hprint_setup();
