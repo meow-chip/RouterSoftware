@@ -171,19 +171,15 @@ impl Cuckoo {
     pub fn lookup(&self, k: &IPAddr) -> Option<IPAddr> {
         let (row_id1, row_id2) = Cuckoo::row_ids(k);
         
-        match self.rows[row_id1].lookup(k) {
-            Some(v) => Some(v),
-            None => self.rows[row_id2].lookup(k)
-        }
+        self.rows[row_id1].lookup(k)
+            .or(self.rows[row_id2].lookup(k))
     }
 
     pub fn remove(&mut self, k: &IPAddr) -> Result<(), ()> {
         let (row_id1, row_id2) = Cuckoo::row_ids(k);
         
-        match self.rows[row_id1].remove(k) {
-            Ok(_) => Ok(()),
-            Err(_) => self.rows[row_id2].remove(k)
-        }
+        self.rows[row_id1].remove(k)
+            .or(self.rows[row_id2].remove(k))
     }
 
 }
