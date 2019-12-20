@@ -60,7 +60,6 @@ pub unsafe extern "C" fn _start() -> ! {
             BufState::Incoming => {
                 match buf_handle.parse() {
                     ParsedBufHandle::ARP(ptr) => {
-                        hprint("ARP\n\r");
                         let mut arp = core::ptr::read_volatile(ptr);
                         match arp.op {
                             Oper::Reply => {
@@ -124,7 +123,7 @@ pub unsafe extern "C" fn _start() -> ! {
                                 let mut reply = ICMPHeader {
                                     r#type: ICMPType::EchoReply,
                                     code: 0,
-                                    rest: [0, 0],
+                                    rest: icmp.rest,
                                     chksum: 0,
                                 };
                                 reply.fill_chksum();
@@ -135,9 +134,13 @@ pub unsafe extern "C" fn _start() -> ! {
                                 ip.outgoing(IPProto::ICMP, 8, [10, 0, 4, 1], handle.src());
 
                                 // TODO: use arp cache?
+                                let port = buf_handle.port();
+                                hprint("Port: ");
+                                hprint_dec(port as u64);
                                 snd_handle.write_dest(buf_handle.src());
                                 snd_handle.write_src([0,0,0,0,0,4]);
-                                snd_handle.write_port(buf_handle.port());
+                                snd_handle.write_port(port);
+                                hprint("\n");
 
                                 let mut snd_data = snd_handle.data() as *mut u16;
                                 let snd_data_origin = snd_data;
@@ -155,13 +158,12 @@ pub unsafe extern "C" fn _start() -> ! {
                                     snd_data = snd_data.offset(1);
                                 }
 
-                                let payload_len = ((snd_data as usize - snd_data_origin as usize) as u16);
+                                let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
                                 hprint("Response len: ");
                                 hprint_dec(payload_len as u64);
                                 hprint("\n\r");
 
-                                snd_handle.write_eth_type(EthType::ARP);
-                                snd_handle.write_port(buf_handle.port());
+                                snd_handle.write_eth_type(EthType::IPv4);
                                 snd_handle.write_payload_len(payload_len);
                                 snd_handle.dump();
                                 snd_handle.send();

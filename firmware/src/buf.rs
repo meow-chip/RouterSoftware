@@ -78,7 +78,7 @@ impl BufHandle {
     }
 
     pub fn port(&self) -> u8 {
-        (unsafe { core::ptr::read_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *const u16) }) as u8
+        unsafe { core::ptr::read_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 15) as *const u8) }
     }
 
     pub fn write_dest(&self, mac: [u8;6]) {
@@ -90,8 +90,8 @@ impl BufHandle {
     }
 
     pub fn write_port(&self, port: u8) {
-        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 12) as *mut u16, 0x81); }
-        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *mut u16, port as u16); }
+        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 12) as *mut u32, 0x81); }
+        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 15) as *mut u8, port); }
     }
 
     fn write_state(&mut self, state: BufState) {
@@ -228,6 +228,16 @@ impl IPv4Handle {
         let mut ret = [0; 4];
 
         for i in 0..4usize {
+            unsafe { ret[i] = core::ptr::read_volatile(self.ptr.offset(12 + i as isize)); }
+        }
+
+        ret
+    }
+
+    pub fn dest(&self) -> [u8; 4] {
+        let mut ret = [0; 4];
+
+        for i in 0..4usize {
             unsafe { ret[i] = core::ptr::read_volatile(self.ptr.offset(16 + i as isize)); }
         }
 
@@ -259,7 +269,7 @@ impl IPv4Handle {
         unsafe {
             // Assumes zero-initialized
             core::ptr::write_volatile(self.ptr, (4 << 4) | 5);
-            core::ptr::write_volatile(self.ptr.offset(2) as *mut u16, payload_len + 20);
+            core::ptr::write_volatile(self.ptr.offset(2) as *mut u16, u16::to_be(payload_len + 20));
 
             core::ptr::write_volatile(self.ptr.offset(8), IP_OUTGOING_TTL);
             core::ptr::write_volatile(self.ptr.offset(9), proto as u8);
