@@ -1,4 +1,3 @@
-use std::mem;
 use super::routing::IPAddr;
 
 const ROWS_NUM: u32 = 1024;
@@ -92,7 +91,7 @@ impl Cuckoo {
     }
 
     fn row_ids(k: &IPAddr) -> (usize, usize) {
-        let h = unsafe { mem::transmute::<IPAddr, u32>(*k) }; // TODO: replace with a real hasher
+        let h = unsafe { core::mem::transmute::<IPAddr, u32>(*k) }; // TODO: replace with a real hasher
         let row_id1 = h & ROWS_NUM_MASK;
         let row_id2 = (h >> 16) & ROWS_NUM_MASK;
         (row_id1 as usize, row_id2 as usize)
