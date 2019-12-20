@@ -7,6 +7,7 @@ pub fn hprint_setup() {
 }
 
 pub fn hprint_char(c: u8) {
+    return;
     unsafe {
         core::ptr::write_volatile((SERIAL_BASE + 4) as *mut u8, c);
         // Spin until FIFO is empty

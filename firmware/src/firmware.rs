@@ -160,18 +160,18 @@ pub unsafe extern "C" fn _start() -> ! {
                                 snd_handle.write_port(port);
                                 hprint("\n\r");
 
-                                let mut snd_data = snd_handle.data() as *mut u16;
+                                let mut snd_data = snd_handle.data() as *mut u8;
                                 let snd_data_origin = snd_data;
 
-                                let ipbuf: [u16; 10] = core::mem::transmute(ipbuf);
-                                let reply: [u16; 64] = core::mem::transmute(reply);
+                                let ipbuf: [u8; 20] = core::mem::transmute(ipbuf);
+                                let reply: [u8; 128] = core::mem::transmute(reply);
 
                                 for i in ipbuf.iter() {
                                     core::ptr::write_volatile(snd_data, *i);
                                     snd_data = snd_data.offset(1);
                                 }
 
-                                for i in 0..tot_size/2 {
+                                for i in 0..tot_size {
                                     core::ptr::write_volatile(snd_data, reply[i as usize]);
                                     snd_data = snd_data.offset(1);
                                 }
@@ -215,7 +215,46 @@ pub unsafe extern "C" fn _start() -> ! {
             },
             BufState::ARPMiss => {
                 hprint("ARP miss packet\n\r");
-                buf_handle.drop();
+                let ptr = buf_handle.data();
+                let dest = unsafe { core::ptr::read(ptr.offset(16) as *const [u8; 4]) };
+                let arp = ARP {
+                    htype: HType::Eth,
+                    ptype: EthType::IPv4,
+                    hlen: 6,
+                    plen: 4,
+                    op: Oper::Req,
+                    sha: [0,0,0,0,0,4],
+                    spa: [10, 0, 4, 1],
+                    tha: [0,0,0,0,0,0],
+                    tpa: dest,
+                };
+
+                let mut snd_data = snd_handle.data() as *mut u8;
+                let snd_data_origin = snd_data;
+
+                let buf: [u8; core::mem::size_of::<ARP>()] = core::mem::transmute(arp);
+
+                for i in buf.iter() {
+                    core::ptr::write_volatile(snd_data, *i);
+                    snd_data = snd_data.offset(1);
+                }
+
+                let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
+                hprint("Sent len: ");
+                hprint_dec(payload_len as u64);
+                hprint("\n\r");
+
+                snd_handle.write_src([0,0,0,0,0,4]);
+                snd_handle.write_dest([255,255,255,255,255,255]);
+
+                snd_handle.write_port(4);
+                snd_handle.write_eth_type(EthType::ARP);
+                snd_handle.write_payload_len(payload_len);
+                snd_handle.dump();
+                snd_handle.send();
+                hprint("Start wait\n\r");
+                snd_handle.wait_snd();
+                hprint("Sent\n\r");
             },
             BufState::ForwardMiss => {
                 hprint("Forward miss packet\n\r");
