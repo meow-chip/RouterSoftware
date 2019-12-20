@@ -265,6 +265,10 @@ impl IPv4Handle {
         }
     }
 
+    pub fn payload_len(&self) -> u16 {
+        u16::from_be(unsafe { core::ptr::read_volatile(self.ptr.offset(2) as *const u16) }) - 20
+    }
+
     pub fn outgoing(&mut self, proto: IPProto, payload_len: u16, src: [u8; 4], dest: [u8; 4]) {
         unsafe {
             // Assumes zero-initialized
@@ -303,16 +307,22 @@ pub mod icmp {
     }
 
     #[repr(C)]
-    pub struct ICMPHeader {
+    pub struct ICMPHeader<const U16_BODY: usize> {
         pub r#type: ICMPType,
         pub code: u8,
         pub chksum: u16,
         pub rest: [u16; 2],
+        pub body: [u16; U16_BODY],
     }
 
-    impl ICMPHeader {
-        pub fn fill_chksum(&mut self) {
-            let mut sum = ((self.r#type as u32) << 8 | self.code as u32) + self.rest[0] as u32 + self.rest[1] as u32;
+    impl<const U16_BODY: usize> ICMPHeader<{U16_BODY}> {
+        pub fn fill_chksum(&mut self, totlen: u16) {
+            let mut sum: u32 = ((self.r#type as u32) << 8) + self.code as u32 + self.rest[0] as u32 + self.rest[1] as u32;
+
+            for idx in 0..(totlen/2 - 4) {
+                sum += self.body[idx as usize] as u32;
+            }
+
             while (sum >> 16) > 0 {
                 sum = sum & 0xFFFF + (sum >> 16)
             }

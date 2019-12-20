@@ -27,6 +27,11 @@ static BOOTMSG: &'static str = "BOOT\n\rHello, MeowRouter!\n\r";
 #[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn _start() -> ! {
+    // Clear memory
+    for i in 0..(4 << 20) {
+        core::ptr::write_volatile(i as *mut u8, 0);
+    }
+
     hprint_setup();
     hprint(BOOTMSG);
 
@@ -53,6 +58,9 @@ pub unsafe extern "C" fn _start() -> ! {
     // Main loop
     loop {
         // Polls recv buf
+        hprint("PTR:");
+        hprint_dec(buf_handle.ptr as u64);
+        hprint("\n\r");
 
         let probed = buf_handle.probe();
 
@@ -113,25 +121,35 @@ pub unsafe extern "C" fn _start() -> ! {
                             hprint("> ICMP\n\r");
                             buf_handle.dump();
 
-                            let icmp = core::mem::transmute::<_, ICMPHeader>(
-                                core::ptr::read_volatile(body as *const [u8;8])
+                            let icmp = core::mem::transmute::<_, ICMPHeader<60>>(
+                                core::ptr::read_volatile(body as *const [u8;128])
                             );
 
                             if icmp.r#type == ICMPType::EchoRequest {
                                 hprint("---\n\r");
                                 // Construct icmp reply
-                                let mut reply = ICMPHeader {
+                                let mut reply = ICMPHeader::<60> {
                                     r#type: ICMPType::EchoReply,
                                     code: 0,
                                     rest: icmp.rest,
                                     chksum: 0,
+                                    body: icmp.body,
                                 };
-                                reply.fill_chksum();
+
+                                // Fill in body
+                                // let tot_size = 64;
+                                let tot_size = 8;
+
+                                hprint("SIZE: ");
+                                hprint_dec(tot_size as u64);
+                                hprint("\n\r");
+                                reply.fill_chksum(tot_size);
 
                                 let mut ipbuf = [0u8;20];
                                 let (mut ip, _) = IPv4Handle::allocate(&mut ipbuf[0]);
 
-                                ip.outgoing(IPProto::ICMP, 8, [10, 0, 4, 1], handle.src());
+                                hprint("Outgoing");
+                                ip.outgoing(IPProto::ICMP, tot_size, [10, 0, 4, 1], handle.src());
 
                                 // TODO: use arp cache?
                                 let port = buf_handle.port();
@@ -140,21 +158,21 @@ pub unsafe extern "C" fn _start() -> ! {
                                 snd_handle.write_dest(buf_handle.src());
                                 snd_handle.write_src([0,0,0,0,0,4]);
                                 snd_handle.write_port(port);
-                                hprint("\n");
+                                hprint("\n\r");
 
                                 let mut snd_data = snd_handle.data() as *mut u16;
                                 let snd_data_origin = snd_data;
 
                                 let ipbuf: [u16; 10] = core::mem::transmute(ipbuf);
-                                let reply: [u16; 4] = core::mem::transmute(reply);
+                                let reply: [u16; 64] = core::mem::transmute(reply);
 
                                 for i in ipbuf.iter() {
                                     core::ptr::write_volatile(snd_data, *i);
                                     snd_data = snd_data.offset(1);
                                 }
 
-                                for i in reply.iter() {
-                                    core::ptr::write_volatile(snd_data, *i);
+                                for i in 0..tot_size/2 {
+                                    core::ptr::write_volatile(snd_data, reply[i as usize]);
                                     snd_data = snd_data.offset(1);
                                 }
 
@@ -165,7 +183,7 @@ pub unsafe extern "C" fn _start() -> ! {
 
                                 snd_handle.write_eth_type(EthType::IPv4);
                                 snd_handle.write_payload_len(payload_len);
-                                snd_handle.dump();
+                                // snd_handle.dump();
                                 snd_handle.send();
                                 hprint("Start wait\n\r");
                                 snd_handle.wait_snd();
@@ -190,7 +208,7 @@ pub unsafe extern "C" fn _start() -> ! {
                 }
             },
             BufState::Outgoing => {
-                unreachable!()
+                hprint("Spin");
             },
             BufState::Vacant => {
                 // Spin
