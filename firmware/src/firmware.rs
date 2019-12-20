@@ -195,6 +195,7 @@ pub unsafe extern "C" fn _start() -> ! {
             },
             BufState::ARPMiss => {
                 hprint("ARP miss packet\n\r");
+                buf_handle.drop();
             },
             BufState::ForwardMiss => {
                 hprint("Forward miss packet\n\r");
