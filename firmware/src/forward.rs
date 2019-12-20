@@ -113,32 +113,73 @@ impl Cuckoo {
         }
 
         // try to insert into the row_id1 first. If it is failed, try to insert into the row_id2
-        match self.rows[row_id1].insert(k, v) {
-            Ok(_) => Ok(()),
-            Err(_) => {
-                self.rows[row_id2].insert(k, v)       
+        if self.rows[row_id1].insert(k, v) == Ok(()) {
+            return Ok(());
+        }
+        if self.rows[row_id2].insert(k, v) == Ok(()) {
+            return Ok(());
+        }
+
+        // shift keys to other rows to reserve a slot for current key
+        for &rid in &[row_id1, row_id2] {
+            if let Some(slot_id) = self.shift(rid, 3) {
+                self.rows[rid].keys[slot_id] = *k;
+                self.rows[rid].values[slot_id] = *v;
+                return Ok(());
+            }
+        }
+        Err(())
+    }
+
+    fn shift(&mut self, row_id: usize, depth: i32) -> Option<usize> {
+        // if there is an empty slot, we stop shifting and return the empty slot id
+        for i in 0..self.rows[row_id].keys.len() {
+            if self.rows[row_id].keys[i] == [0, 0, 0, 0] {
+                return Some(i);
             }
         }
 
-        // TODO: shift keys to other rows to reserve a slot for current key
+        if depth == 0 {
+            return None;
+        }
+
+        for i in 0..self.rows[row_id].keys.len() {
+            let ref k = self.rows[row_id].keys[i];
+            let (mut row_id1, mut row_id2) = Cuckoo::row_ids(k);
+
+            // we cannot do anything if a key only has one candidate row
+            if row_id1 == row_id2 {
+                continue;
+            }
+
+            // swap to make sure row_id1 == row_id
+            if row_id2 == row_id {
+                core::mem::swap(&mut row_id1, &mut row_id2);
+            }
+
+            if let Some(slot_id) = self.shift(row_id2, depth - 1) {
+                // move the currnt key to new row, and return the empty slot
+                self.rows[row_id2].keys[slot_id] = self.rows[row_id].keys[i];
+                self.rows[row_id2].values[slot_id] = self.rows[row_id].values[i];
+                return Some(i);
+            }
+        }
+
+        None
     }
 
     pub fn lookup(&self, k: &IPAddr) -> Option<IPAddr> {
         let (row_id1, row_id2) = Cuckoo::row_ids(k);
         
-        match self.rows[row_id1].lookup(k) {
-            Some(v) => Some(v),
-            None => self.rows[row_id2].lookup(k)
-        }
+        self.rows[row_id1].lookup(k)
+            .or(self.rows[row_id2].lookup(k))
     }
 
     pub fn remove(&mut self, k: &IPAddr) -> Result<(), ()> {
         let (row_id1, row_id2) = Cuckoo::row_ids(k);
         
-        match self.rows[row_id1].remove(k) {
-            Ok(_) => Ok(()),
-            Err(_) => self.rows[row_id2].remove(k)
-        }
+        self.rows[row_id1].remove(k)
+            .or(self.rows[row_id2].remove(k))
     }
 
 }
@@ -181,13 +222,60 @@ fn test_cuckoo() -> Result<(), ()> {
     Ok(())
 }
 
-#[test]
-fn test_cuckoo_modifiying() -> Result<(), ()> {
-    let mut c = Cuckoo::new();
+#[cfg(test)]
+mod tests {
+    extern crate rand;
+    use std::vec::Vec;
+    use std::collections::HashSet;
+    use rand::prelude::*;
+    use super::*;
 
-    c.insert(&[192, 168, 1, 23], &[192, 168, 1, 1])?;
-    c.insert(&[192, 168, 1, 23], &[10, 1, 1, 1])?;
-    assert_eq!(c.lookup(&[192, 168, 1, 23]).unwrap(), [10, 1, 1, 1]);
+    #[test]
+    fn test_cuckoo_modifiying() -> Result<(), ()> {
+        let mut c = Cuckoo::new();
+    
+        c.insert(&[192, 168, 1, 23], &[192, 168, 1, 1])?;
+        c.insert(&[192, 168, 1, 23], &[10, 1, 1, 1])?;
+        assert_eq!(c.lookup(&[192, 168, 1, 23]).unwrap(), [10, 1, 1, 1]);
+    
+        Ok(())
+    }
+    
+    #[test]
+    fn test_utlizaiont_rate() -> Result<(), ()> {
+        // the table can store 0.8 * ROWS_NUM * 4 keys
+        // i.e., the utilization rate is 0.8
+        let key_cnt = (0.8 * ROWS_NUM as f32 * 4 as f32) as usize;
+    
+        let mut c = Cuckoo::new();
+        let mut kvs = Vec::<(IPAddr, IPAddr)>::with_capacity(key_cnt);
+        let mut keys = HashSet::<IPAddr>::new();
+        
+        let gen_ipaddr = | | -> IPAddr {
+            let mut rng = rand::thread_rng();
+            [rng.gen::<u8>(), rng.gen::<u8>(), rng.gen::<u8>(), rng.gen::<u8>()]
+        };
+        
+        // insert
+        for _ in 0..key_cnt {
+            loop {
+                let k = gen_ipaddr();
+                let v = gen_ipaddr();
+                // to ensure there are not duplicate keys
+                if !keys.contains(&k) && k != [0, 0, 0, 0] {
+                    c.insert(&k, &v)?;
+                    keys.insert(k);
+                    kvs.push((k, v));
+                    break;
+                }
+            }
+        }
 
-    Ok(())
+        // check
+        for (from, to) in &kvs {
+            assert_eq!(c.lookup(from).unwrap(), *to);
+        }
+    
+        Ok(())
+    }
 }
