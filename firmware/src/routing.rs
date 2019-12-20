@@ -40,7 +40,7 @@ impl<'a> Trie<'a> {
      * Rules should be sorted based on their length
      */
 
-    fn from_rules<const LEN: usize>(store: &'a mut TrieBuf<'a, LEN>, rules: &[Rule]) -> &'a Trie<'a> {
+    fn from_rules<const LEN: usize>(store: &'a mut TrieBuf<'a, {LEN}>, rules: &[Rule]) -> &'a Trie<'a> {
         let root = store.alloc();
         root.value = None;
         root.next = [None; 1 << TRIE_BITLEN];
@@ -52,7 +52,7 @@ impl<'a> Trie<'a> {
         root
     }
 
-    fn apply_rule<const LEN: usize>(&mut self, store: &'a mut TrieBuf<'a, LEN>, rule: &Rule, depth: u8) {
+    fn apply_rule<const LEN: usize>(&mut self, store: &'a mut TrieBuf<'a, {LEN}>, rule: &Rule, depth: u8) {
 
         if depth >= rule.len {
             self.value = Some(rule.next);
@@ -81,6 +81,8 @@ impl<'a> Trie<'a> {
                         self.next[idx as usize] = Some(ptr);
                         ptr
                     };
+
+                    n.apply_rule(store, rule, depth + TRIE_BITLEN);
                 }
             }
         }
@@ -103,7 +105,7 @@ pub struct TrieBuf<'a, const LEN: usize> {
     ptr: usize,
 }
 
-impl<'a, const LEN: usize> TrieBuf<'a, LEN> {
+impl<'a, const LEN: usize> TrieBuf<'a, {LEN}> {
     fn reset(&mut self) {
         self.ptr = 0;
     }
@@ -112,5 +114,37 @@ impl<'a, const LEN: usize> TrieBuf<'a, LEN> {
         let ret = &mut self.store[self.ptr];
         self.ptr += 1;
         ret
+    }
+}
+
+#[test]
+fn test_routing() {
+    let mut rules = [
+        Rule {
+            prefix: [10,0,1,0],
+            len: 24,
+            next: [192,168,1,1],
+        },
+        Rule {
+            prefix: [10,0,2,0],
+            len: 24,
+            next: [192,168,2,1],
+        },
+        Rule {
+            prefix: [10,0,0,0],
+            len: 16,
+            next: [192,168,3,1],
+        },
+        Rule {
+            prefix: [0,0,0,0],
+            len: 0,
+            next: [192,168,4,1],
+        },
+    ];
+
+    rules.sort_by(|a, b| b.len.cmp(&a.len));
+
+    for i in rules.iter() {
+        println!("{}", i.len);
     }
 }

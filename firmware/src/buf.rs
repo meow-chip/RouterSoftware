@@ -1,8 +1,10 @@
 use crate::data::arp::ARP;
 use crate::util::*;
 
+const IP_OUTGOING_TTL: u8 = 64;
+
 #[repr(u8)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum BufState {
     Vacant = 0,
     Incoming = 1,
@@ -24,7 +26,7 @@ impl BufState {
 }
 
 #[repr(u16)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum EthType {
     ARP = 0x0608,
     IPv4 = 0x0008,
@@ -41,6 +43,7 @@ pub struct BufHandle {
 
 pub enum ParsedBufHandle {
     ARP(*mut ARP),
+    IPv4(IPv4Handle, *mut u8),
     Unknown,
 }
 
@@ -50,6 +53,10 @@ impl BufHandle {
         unsafe {
             core::ptr::read_volatile(status_addr as *const BufState)
         }
+    }
+
+    pub fn wait_snd(&self) {
+        while self.probe() == BufState::Outgoing {}
     }
 
     pub fn drop(&mut self) {
@@ -83,6 +90,7 @@ impl BufHandle {
     }
 
     pub fn write_port(&self, port: u8) {
+        unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 12) as *mut u16, 0x81); }
         unsafe { core::ptr::write_volatile((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 14) as *mut u16, port as u16); }
     }
 
@@ -94,6 +102,10 @@ impl BufHandle {
     }
 
     fn step(&mut self) {
+        if self.ptr == 0 {
+            return;
+        }
+
         self.ptr = if self.ptr == BUF_COUNT - 1 {
             1
         } else {
@@ -102,21 +114,39 @@ impl BufHandle {
     }
 
     pub fn parse(&self) -> ParsedBufHandle {
-        let et = self.get_eth_type();
-        hprint("ETHTYPE:");
-        hprint_hex(unsafe {&core::intrinsics::transmute::<_, [u8; 2]>(et)});
-        hprint("\n\r");
+        let et = self.eth_type();
+        // hprint("ETHTYPE:");
+        // hprint_hex(unsafe {&core::intrinsics::transmute::<_, [u8; 2]>(et)});
+        // hprint("\n\r");
 
-        match et {
-            EthType::ARP => ParsedBufHandle::ARP((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 18) as *mut ARP),
-            _ => ParsedBufHandle::Unknown,
+        if et == EthType::ARP { ParsedBufHandle::ARP((BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 18) as *mut ARP) }
+        else if et == EthType::IPv4 {
+            ParsedBufHandle::IPv4(
+                IPv4Handle {
+                    ptr: (BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 18) as *mut u8,
+                },
+                (BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 18 + 20) as *mut u8,
+            )
+        } else {
+            ParsedBufHandle::Unknown
         }
     }
 
-    fn get_eth_type(&self) -> EthType {
+    pub fn data(&mut self) -> *mut u8 {
+        (BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE + 18) as *mut u8
+    }
+
+    pub fn eth_type(&self) -> EthType {
         let eth_type_addr = BUF_BASE + (self.ptr as u64) * BUF_CELL_SIZE + 16;
         unsafe {
             core::ptr::read_volatile(eth_type_addr as *const EthType)
+        }
+    }
+
+    pub fn write_eth_type(&self, t: EthType) {
+        let eth_type_addr = BUF_BASE + (self.ptr as u64) * BUF_CELL_SIZE + 16;
+        unsafe {
+            core::ptr::write_volatile(eth_type_addr as *mut EthType, t);
         }
     }
 
@@ -140,6 +170,13 @@ impl BufHandle {
             hprint("\n\r");
         }
     }
+
+    pub fn write_payload_len(&mut self, len: u16) {
+        let len_addr = BUF_BASE + (self.ptr as u64 + 1) * BUF_CELL_SIZE - 4;
+        let len = unsafe {
+            core::ptr::write_volatile(len_addr as *mut u16, len + 18)
+        };
+    }
 }
 
 pub fn rst_buf() -> BufHandle {
@@ -157,3 +194,120 @@ pub fn rst_buf() -> BufHandle {
     }
 }
 
+pub fn snd_buf() -> BufHandle {
+    BufHandle {
+        ptr : 0,
+    }
+}
+
+pub struct IPv4Handle {
+    ptr: *mut u8,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq)]
+pub enum IPProto {
+    ICMP = 0x01,
+    IGMP = 0x02,
+    TCP = 0x06,
+    UDP = 0x11,
+}
+
+impl IPv4Handle {
+    pub fn allocate(buf: *mut u8) -> (IPv4Handle, *mut u8) {
+        unsafe {
+            (IPv4Handle { ptr: buf }, buf.offset(20))
+        }
+    }
+
+    pub fn proto(&self) -> IPProto {
+        unsafe { core::ptr::read_volatile(self.ptr.offset(9) as *mut IPProto) }
+    }
+
+    pub fn src(&self) -> [u8; 4] {
+        let mut ret = [0; 4];
+
+        for i in 0..4usize {
+            unsafe { ret[i] = core::ptr::read_volatile(self.ptr.offset(16 + i as isize)); }
+        }
+
+        ret
+    }
+
+    pub fn fill_chksum(&mut self) {
+        // Assume aligned
+        let mut sum = 0u32;
+        for i in 0..10 {
+            if i == 5 { continue; }
+
+            unsafe {
+                let readout = *((self.ptr as *const u16).offset(i));
+                sum += readout as u32;
+            }
+        }
+
+        while (sum >> 16) > 0 {
+            sum = sum & 0xFFFF + (sum >> 16)
+        }
+
+        unsafe {
+            *(self.ptr as *mut u16).offset(5) = sum as u16;
+        }
+    }
+
+    pub fn outgoing(&mut self, proto: IPProto, payload_len: u16, src: [u8; 4], dest: [u8; 4]) {
+        unsafe {
+            // Assumes zero-initialized
+            core::ptr::write_volatile(self.ptr, (4 << 4) | 5);
+            core::ptr::write_volatile(self.ptr.offset(2) as *mut u16, payload_len + 20);
+
+            core::ptr::write_volatile(self.ptr.offset(8), IP_OUTGOING_TTL);
+            core::ptr::write_volatile(self.ptr.offset(9), proto as u8);
+            for i in 0..4usize {
+                core::ptr::write_volatile(self.ptr.offset(12 + i as isize), src[i]);
+            }
+
+            for i in 0..4usize {
+                core::ptr::write_volatile(self.ptr.offset(16 + i as isize), dest[i]);
+            }
+        }
+
+        self.fill_chksum();
+    }
+}
+
+pub mod icmp {
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq)]
+    pub enum ICMPType {
+        EchoReply = 0,
+        Unreachable = 3,
+        Redirect = 5,
+        EchoRequest = 8,
+        RouterAd = 9,
+        RouterSol = 10,
+        TimeExceeded = 11,
+        BadIPHeader = 12,
+        Timestamp = 13,
+        TimestampReply = 14,
+    }
+
+    #[repr(C)]
+    pub struct ICMPHeader {
+        pub r#type: ICMPType,
+        pub code: u8,
+        pub chksum: u16,
+        pub rest: [u16; 2],
+    }
+
+    impl ICMPHeader {
+        pub fn fill_chksum(&mut self) {
+            let mut sum = ((self.r#type as u32) << 8 | self.code as u32) + self.rest[0] as u32 + self.rest[1] as u32;
+            while (sum >> 16) > 0 {
+                sum = sum & 0xFFFF + (sum >> 16)
+            }
+
+            self.chksum = sum as u16;
+        }
+    }
+}

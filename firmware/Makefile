@@ -10,6 +10,9 @@ all: firmware.bin
 target/$(TARGET)/release/libfirmware.a: $(SRCS) firmware.ld
 	cargo rustc --target $(TARGET) --release
 
+target/$(TARGET)/debug/libfirmware.a: $(SRCS) firmware.ld
+	cargo rustc --target $(TARGET)
+
 env.o: env.S
 	$(PREFIX)as -march=rv64imac -o env.o env.S
 
