@@ -59,6 +59,8 @@ impl NeighboorCache {
             hardware_slot: None,
             ip, mac, port,
         };
+
+        self.nptr += 1;
     }
 
     pub fn write_hardware(&mut self, at: usize) {

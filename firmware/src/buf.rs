@@ -30,6 +30,7 @@ impl BufState {
 pub enum EthType {
     ARP = 0x0608,
     IPv4 = 0x0008,
+    IPv6 = 0x86DD,
 }
 
 const BUF_BASE: u64 = 0xFFFF30000000u64;
@@ -62,7 +63,10 @@ impl BufHandle {
 
     pub fn send(&mut self) {
         self.write_state(BufState::Outgoing);
-        while self.probe() == BufState::Outgoing {}
+        while self.probe() == BufState::Outgoing {
+            // hprint(".");
+        }
+        // hprint("\n\r");
         self.step();
     }
 
@@ -248,17 +252,17 @@ impl IPv4Handle {
             if i == 5 { continue; }
 
             unsafe {
-                let readout = *((self.ptr as *const u16).offset(i));
+                let readout = u16::from_be(*((self.ptr as *const u16).offset(i)));
                 sum += readout as u32;
             }
         }
 
         while (sum >> 16) > 0 {
-            sum = sum & 0xFFFF + (sum >> 16)
+            sum = (sum & 0xFFFF) + (sum >> 16)
         }
 
         unsafe {
-            *(self.ptr as *mut u16).offset(5) = sum as u16;
+            *(self.ptr as *mut u16).offset(5) = !u16::to_be(sum as u16);
         }
     }
 
@@ -314,17 +318,19 @@ pub mod icmp {
 
     impl<const U16_BODY: usize> ICMPHeader<{U16_BODY}> {
         pub fn fill_chksum(&mut self, totlen: u16) {
-            let mut sum: u32 = ((self.r#type as u32) << 8) + self.code as u32 + self.rest[0] as u32 + self.rest[1] as u32;
+            let mut sum: u32 =
+                ((self.r#type as u32) << 8) + self.code as u32 +
+                u16::from_be(self.rest[0]) as u32 + u16::from_be(self.rest[1]) as u32;
 
             for idx in 0..(totlen/2 - 4) {
-                sum += self.body[idx as usize] as u32;
+                sum += u16::from_be(self.body[idx as usize]) as u32;
             }
 
             while (sum >> 16) > 0 {
-                sum = sum & 0xFFFF + (sum >> 16)
+                sum = (sum & 0xFFFF) + (sum >> 16);
             }
 
-            self.chksum = sum as u16;
+            self.chksum = !u16::to_be(sum as u16);
         }
     }
 }

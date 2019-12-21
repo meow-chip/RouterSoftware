@@ -26,9 +26,9 @@ pub enum RoutingLookup {
 }
 
 pub struct Rule {
-    prefix: IPAddr,
-    len: u8,
-    next: IPAddr,
+    pub prefix: IPAddr,
+    pub len: u8,
+    pub next: IPAddr,
 }
 
 #[derive(Default, Clone, Copy)]

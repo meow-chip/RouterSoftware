@@ -34,20 +34,22 @@ const IPS: [[u8; 4]; 5] = [
 ];
 
 const MACS: [[u8; 6]; 5] = [
-    [0, 1, 0, 0, 0, 0],
-    [1, 0, 0, 0, 0, 0],
-    [2, 0, 0, 0, 0, 0],
-    [3, 0, 0, 0, 0, 0],
-    [4, 0, 0, 0, 0, 0],
+    [0x9c, 0xeb, 0, 0, 1, 0],
+    [0x9c, 0xeb, 0, 0, 0, 1],
+    [0x9c, 0xeb, 0, 0, 0, 2],
+    [0x9c, 0xeb, 0, 0, 0, 3],
+    [0x9c, 0xeb, 0, 0, 0, 4],
 ];
 
 #[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn _start() -> ! {
     // Clear memory
+    /*
     for i in 0..(4 << 20) {
         core::ptr::write_volatile(i as *mut u8, 0);
     }
+    */
 
     hprint_setup();
     hprint(BOOTMSG);
@@ -63,7 +65,7 @@ pub unsafe extern "C" fn _start() -> ! {
         next: [255,255,255,255], // Routes to broadcast = ignore
     }];
 
-    let routing_storage: [Trie; 16384] = [Default::default(); 16384];
+    let routing_storage: [Trie; 4096] = [Default::default(); 4096];
     let mut routing_alloc = TrieBuf::new(routing_storage);
     let mut routing_table = Trie::from_rules(&mut routing_alloc, &default_rules);
 
@@ -93,11 +95,16 @@ pub unsafe extern "C" fn _start() -> ! {
     }
 
     // Main loop
+    let mut last_cycle = 0;
     loop {
         // Polls recv buf
-        // hprint("PTR:");
-        // hprint_dec(buf_handle.ptr as u64);
-        // hprint("\n\r");
+        if buf_handle.ptr as u64 != last_cycle {
+            hprint("Ptr step: ");
+            hprint_dec(buf_handle.ptr as u64);
+            hprint("\n\r");
+
+            last_cycle = buf_handle.ptr as u64;
+        }
 
         let probed = buf_handle.probe();
 
@@ -124,14 +131,17 @@ pub unsafe extern "C" fn _start() -> ! {
                                 buf_handle.drop();
                             },
                             Oper::Req => {
-                                hprint("ARP request\n\r");
                                 let port = buf_handle.port();
 
                                 if ncache.lookup(&arp.tpa).is_none() {
-                                    ncache.put(arp.tpa, arp.tha, buf_handle.port());
+                                    hprint("ARP cache put:\n\r");
+                                    hprint("  ");
+                                    hprint_ip(&arp.spa);
+                                    hprint(" -> ");
+                                    hprint_mac(&arp.sha);
+                                    hprint("\n\r");
+                                    ncache.put(arp.spa, arp.sha, buf_handle.port());
                                 }
-
-                                hprint("NCACHE put\n\r");
 
                                 arp.tpa = arp.spa;
                                 arp.tha = arp.sha;
@@ -145,16 +155,12 @@ pub unsafe extern "C" fn _start() -> ! {
                                 buf_handle.write_dest(src);
                                 buf_handle.write_src(MACS[port as usize]);
 
-                                hprint("Sending\n\r");
-
                                 buf_handle.send();
-                                hprint("Sent\n\r");
                             },
                         }
                     },
                     ParsedBufHandle::IPv4(handle, body) => {
                         hprint("IP:\n\r");
-                        buf_handle.drop();
 
                         let proto = handle.proto();
 
@@ -175,7 +181,12 @@ pub unsafe extern "C" fn _start() -> ! {
                                 }
                             }
 
+                            hprint("Read: \n\r");
+                            hprint_hex(&icmp_rd);
+
                             let icmp: ICMPHeader::<60> = core::mem::transmute(icmp_rd);
+
+                            hprint("\n\r");
 
                             if icmp.r#type == ICMPType::EchoRequest {
                                 hprint("---\n\r");
@@ -188,7 +199,6 @@ pub unsafe extern "C" fn _start() -> ! {
                                     body: icmp.body,
                                 };
 
-
                                 // Fill in body
                                 // let tot_size = 64;
                                 reply.fill_chksum(tot_size);
@@ -196,18 +206,16 @@ pub unsafe extern "C" fn _start() -> ! {
                                 let mut ipbuf = [0u8;20];
                                 let (mut ip, _) = IPv4Handle::allocate(&mut ipbuf[0]);
 
-                                // TODO: use arp cache?
                                 let port = buf_handle.port();
                                 hprint("Port: ");
                                 hprint_dec(port as u64);
                                 snd_handle.write_dest(buf_handle.src());
-                                snd_handle.write_src([0,0,0,0,0,4]);
+                                snd_handle.write_src(MACS[port as usize]);
                                 snd_handle.write_port(port);
                                 hprint("\n\r");
 
                                 hprint("Outgoing\n\r");
-                                ip.outgoing(IPProto::ICMP, tot_size, [10, 0, 4, 1], handle.src());
-
+                                ip.outgoing(IPProto::ICMP, tot_size, IPS[port as usize], handle.src());
 
                                 let mut snd_data = snd_handle.data() as *mut u8;
                                 let snd_data_origin = snd_data;
@@ -232,20 +240,26 @@ pub unsafe extern "C" fn _start() -> ! {
 
                                 snd_handle.write_eth_type(EthType::IPv4);
                                 snd_handle.write_payload_len(payload_len);
-                                // snd_handle.dump();
+                                snd_handle.dump();
                                 snd_handle.send();
                                 hprint("Sent\n\r");
+                            } else {
+                                hprint("> Unsupported ICMP type\n\r");
                             }
+                            buf_handle.drop();
                         } else if proto == IPProto::IGMP {
                             hprint("> IGMP\n\r");
+                            buf_handle.drop();
                         } else if proto == IPProto::TCP {
                             hprint("> TCP\n\r");
+                            buf_handle.drop();
                         } else if proto == IPProto::UDP {
                             hprint("> UDP\n\r");
+                            buf_handle.drop();
                         } else {
                             hprint("> Unknown!\n\r");
+                            buf_handle.drop();
                         }
-                        buf_handle.drop();
                     },
                     ParsedBufHandle::Unknown => {
                         hprint("Unknown Incoming Packet:\n\r");
