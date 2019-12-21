@@ -60,7 +60,11 @@ impl NeighboorCache {
             ip, mac, port,
         };
 
-        self.nptr += 1;
+        self.nptr = if self.nptr == NC_ENT_COUNT - 1 {
+            0
+        } else {
+            self.nptr + 1
+        };
     }
 
     pub fn write_hardware(&mut self, at: usize) {
@@ -74,19 +78,36 @@ impl NeighboorCache {
         let ip_cmd = Cmd {
             op: Op::WriteNCEntIP,
             idx: self.nhwptr as u8,
-            data: unsafe { core::mem::transmute((self.entries[at].ip, [0u8; 2])) }
+            data: [
+                self.entries[at].ip[3],
+                self.entries[at].ip[2],
+                self.entries[at].ip[1],
+                self.entries[at].ip[0],
+                0,
+                0,
+            ],
         };
 
         let mac_cmd = Cmd {
             op: Op::WriteNCEntMAC,
             idx: self.nhwptr as u8,
-            data: self.entries[at].mac,
+            data: [
+                self.entries[at].mac[5],
+                self.entries[at].mac[4],
+                self.entries[at].mac[3],
+                self.entries[at].mac[2],
+                self.entries[at].mac[1],
+                self.entries[at].mac[0],
+            ],
         };
 
         let port_cmd = Cmd {
             op: Op::WriteNCEntPort,
             idx: self.nhwptr as u8,
-            data: unsafe { core::mem::transmute(([self.entries[at].port], [0u8; 5])) }
+            data: [
+                self.entries[at].port,
+                0,0,0,0,0
+            ],
         };
 
         let en_cmd = Cmd {

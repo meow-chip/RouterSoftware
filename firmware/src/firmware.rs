@@ -340,8 +340,8 @@ pub unsafe extern "C" fn _start() -> ! {
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
     hprint("PANIC:\n\r");
-    let ps = info.payload().downcast_ref::<&str>().unwrap();
-    hprint(ps);
+    // let ps = info.payload().downcast_ref::<&str>().unwrap();
+    // hprint(ps);
 
     loop {}
 }
