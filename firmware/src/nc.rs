@@ -10,9 +10,9 @@ const NC_ENT_HW_COUNT: usize = 8;
 
 #[derive(Default)]
 pub struct NCEntry {
-    ip: [u8; 4],
-    mac: [u8; 6],
-    port: u8,
+    pub ip: [u8; 4],
+    pub mac: [u8; 6],
+    pub port: u8,
     hardware_slot: Option<usize>,
     valid: bool,
 }
@@ -61,7 +61,7 @@ impl NeighboorCache {
         };
     }
 
-    pub fn write_hardwre(&mut self, at: usize) {
+    pub fn write_hardware(&mut self, at: usize) {
         for ent in self.entries.iter_mut() {
             if ent.valid && ent.hardware_slot == Some(self.nhwptr) {
                 ent.hardware_slot = None;

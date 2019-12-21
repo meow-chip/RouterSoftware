@@ -15,4 +15,7 @@ _rst_vec:
   j _start
 
 _trap_vec:
+  csrrs a0, mepc, zero
+  csrrs a1, mcause, zero
+  csrrs a2, mtval, zero
   j _trap

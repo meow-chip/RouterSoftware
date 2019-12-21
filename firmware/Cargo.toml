@@ -11,3 +11,6 @@ crate-type = ["staticlib"]
 
 [dev-dependencies]
 rand = "0.7"
+
+[dependencies]
+riscv = "0.5.4"

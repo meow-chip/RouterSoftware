@@ -55,10 +55,6 @@ impl BufHandle {
         }
     }
 
-    pub fn wait_snd(&self) {
-        while self.probe() == BufState::Outgoing {}
-    }
-
     pub fn drop(&mut self) {
         self.write_state(BufState::Vacant);
         self.step();
@@ -66,6 +62,7 @@ impl BufHandle {
 
     pub fn send(&mut self) {
         self.write_state(BufState::Outgoing);
+        while self.probe() == BufState::Outgoing {}
         self.step();
     }
 
@@ -221,7 +218,7 @@ impl IPv4Handle {
     }
 
     pub fn proto(&self) -> IPProto {
-        unsafe { core::ptr::read_volatile(self.ptr.offset(9) as *mut IPProto) }
+        unsafe { core::ptr::read_volatile(self.ptr.offset(9) as *const IPProto) }
     }
 
     pub fn src(&self) -> [u8; 4] {

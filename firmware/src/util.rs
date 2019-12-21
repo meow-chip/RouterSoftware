@@ -46,6 +46,13 @@ pub fn hprint_hex_byte(b: u8) {
     hprint_hex_digit(lo);
 }
 
+pub fn hprint_hex_u64(b: u64) {
+    for i in 0..8 {
+        hprint_hex_byte((b >> (64 - i * 8 - 8)) as u8);
+        hprint(" ");
+    }
+}
+
 pub fn hprint_hex(s: &[u8]) {
     for b in s {
         hprint_hex_byte(*b);

@@ -24,6 +24,22 @@ use util::*;
 
 static BOOTMSG: &'static str = "BOOT\n\rHello, MeowRouter!\n\r";
 
+const IPS: [[u8; 4]; 5] = [
+    [10, 0, 0, 1],
+    [10, 0, 1, 1],
+    [10, 0, 2, 1],
+    [10, 0, 3, 1],
+    [10, 0, 4, 1],
+];
+
+const MACS: [[u8; 6]; 5] = [
+    [0, 1, 0, 0, 0, 0],
+    [1, 0, 0, 0, 0, 0],
+    [2, 0, 0, 0, 0, 0],
+    [3, 0, 0, 0, 0, 0],
+    [4, 0, 0, 0, 0, 0],
+];
+
 #[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn _start() -> ! {
@@ -45,22 +61,32 @@ pub unsafe extern "C" fn _start() -> ! {
         Cmd {
             op: Op::SetIP,
             idx: vlan,
-            data: [1, vlan, 0, 10, 0, 0],
+            data: [
+                IPS[vlan as usize][3], IPS[vlan as usize][2], IPS[vlan as usize][1], IPS[vlan as usize][0],
+                0, 0,
+            ],
         }.send();
 
         Cmd {
             op: Op::SetMAC,
             idx: vlan,
-            data: [vlan, 0, 0, 0, 0, 0],
+            data: [
+                MACS[vlan as usize][5],
+                MACS[vlan as usize][4],
+                MACS[vlan as usize][3],
+                MACS[vlan as usize][2],
+                MACS[vlan as usize][1],
+                MACS[vlan as usize][0],
+            ],
         }.send();
     }
 
     // Main loop
     loop {
         // Polls recv buf
-        hprint("PTR:");
-        hprint_dec(buf_handle.ptr as u64);
-        hprint("\n\r");
+        // hprint("PTR:");
+        // hprint_dec(buf_handle.ptr as u64);
+        // hprint("\n\r");
 
         let probed = buf_handle.probe();
 
@@ -87,33 +113,37 @@ pub unsafe extern "C" fn _start() -> ! {
                                 buf_handle.drop();
                             },
                             Oper::Req => {
-                                // hprint("ARP request\n\r");
+                                hprint("ARP request\n\r");
+                                let port = buf_handle.port();
+
+                                if ncache.lookup(&arp.tpa).is_none() {
+                                    ncache.put(arp.tpa, arp.tha, buf_handle.port());
+                                }
+
+                                hprint("NCACHE put\n\r");
 
                                 arp.tpa = arp.spa;
                                 arp.tha = arp.sha;
-                                arp.spa = [10, 0, 4, 1];
-                                arp.sha = [0,0,0,0,0,4];
+                                arp.spa = IPS[port as usize];
+                                arp.sha = MACS[port as usize];
                                 arp.op = Oper::Reply;
 
                                 core::ptr::write_volatile(ptr, arp);
 
                                 let src = buf_handle.src();
                                 buf_handle.write_dest(src);
-                                buf_handle.write_src([0,0,0,0,0,4]);
+                                buf_handle.write_src(MACS[port as usize]);
+
+                                hprint("Sending\n\r");
 
                                 buf_handle.send();
-
-                                // TODO: place src arp into cache
+                                hprint("Sent\n\r");
                             },
                         }
                     },
                     ParsedBufHandle::IPv4(handle, body) => {
                         hprint("IP:\n\r");
-
-                        let proto = handle.proto();
-                        hprint("PROTO: ");
-                        hprint_dec(proto as u64);
-                        hprint("\n\r");
+                        buf_handle.drop();
 
                         let proto = handle.proto();
 
@@ -121,9 +151,20 @@ pub unsafe extern "C" fn _start() -> ! {
                             hprint("> ICMP\n\r");
                             buf_handle.dump();
 
-                            let icmp = core::mem::transmute::<_, ICMPHeader<60>>(
-                                core::ptr::read_volatile(body as *const [u8;128])
-                            );
+                            let tot_size = handle.payload_len();
+
+                            hprint("SIZE: ");
+                            hprint_dec(tot_size as u64);
+                            hprint("\n\r");
+
+                            let mut icmp_rd = [0; 128];
+                            for i in 0..tot_size {
+                                unsafe {
+                                    icmp_rd[i as usize] = core::ptr::read_volatile(body.offset(i as isize));
+                                }
+                            }
+
+                            let icmp: ICMPHeader::<60> = core::mem::transmute(icmp_rd);
 
                             if icmp.r#type == ICMPType::EchoRequest {
                                 hprint("---\n\r");
@@ -136,20 +177,13 @@ pub unsafe extern "C" fn _start() -> ! {
                                     body: icmp.body,
                                 };
 
+
                                 // Fill in body
                                 // let tot_size = 64;
-                                let tot_size = 8;
-
-                                hprint("SIZE: ");
-                                hprint_dec(tot_size as u64);
-                                hprint("\n\r");
                                 reply.fill_chksum(tot_size);
 
                                 let mut ipbuf = [0u8;20];
                                 let (mut ip, _) = IPv4Handle::allocate(&mut ipbuf[0]);
-
-                                hprint("Outgoing");
-                                ip.outgoing(IPProto::ICMP, tot_size, [10, 0, 4, 1], handle.src());
 
                                 // TODO: use arp cache?
                                 let port = buf_handle.port();
@@ -159,6 +193,10 @@ pub unsafe extern "C" fn _start() -> ! {
                                 snd_handle.write_src([0,0,0,0,0,4]);
                                 snd_handle.write_port(port);
                                 hprint("\n\r");
+
+                                hprint("Outgoing\n\r");
+                                ip.outgoing(IPProto::ICMP, tot_size, [10, 0, 4, 1], handle.src());
+
 
                                 let mut snd_data = snd_handle.data() as *mut u8;
                                 let snd_data_origin = snd_data;
@@ -185,8 +223,6 @@ pub unsafe extern "C" fn _start() -> ! {
                                 snd_handle.write_payload_len(payload_len);
                                 // snd_handle.dump();
                                 snd_handle.send();
-                                hprint("Start wait\n\r");
-                                snd_handle.wait_snd();
                                 hprint("Sent\n\r");
                             }
                         } else if proto == IPProto::IGMP {
@@ -217,44 +253,55 @@ pub unsafe extern "C" fn _start() -> ! {
                 hprint("ARP miss packet\n\r");
                 let ptr = buf_handle.data();
                 let dest = unsafe { core::ptr::read(ptr.offset(16) as *const [u8; 4]) };
-                let arp = ARP {
-                    htype: HType::Eth,
-                    ptype: EthType::IPv4,
-                    hlen: 6,
-                    plen: 4,
-                    op: Oper::Req,
-                    sha: [0,0,0,0,0,4],
-                    spa: [10, 0, 4, 1],
-                    tha: [0,0,0,0,0,0],
-                    tpa: dest,
-                };
 
-                let mut snd_data = snd_handle.data() as *mut u8;
-                let snd_data_origin = snd_data;
+                if let Some(idx) = ncache.lookup(&dest) {
+                    ncache.write_hardware(idx);
+                    let result = ncache.get(idx);
+                    buf_handle.write_dest(result.mac);
+                    buf_handle.write_port(result.port);
+                    buf_handle.send();
+                } else {
+                    for i in 1..=4 {
+                        let arp = ARP {
+                            htype: HType::Eth,
+                            ptype: EthType::IPv4,
+                            hlen: 6,
+                            plen: 4,
+                            op: Oper::Req,
+                            sha: MACS[i],
+                            spa: IPS[i],
+                            tha: [0,0,0,0,0,0],
+                            tpa: dest,
+                        };
 
-                let buf: [u8; core::mem::size_of::<ARP>()] = core::mem::transmute(arp);
+                        let mut snd_data = snd_handle.data() as *mut u8;
+                        let snd_data_origin = snd_data;
 
-                for i in buf.iter() {
-                    core::ptr::write_volatile(snd_data, *i);
-                    snd_data = snd_data.offset(1);
+                        let buf: [u8; core::mem::size_of::<ARP>()] = core::mem::transmute(arp);
+
+                        for i in buf.iter() {
+                            core::ptr::write_volatile(snd_data, *i);
+                            snd_data = snd_data.offset(1);
+                        }
+
+                        let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
+                        hprint("Sent len: ");
+                        hprint_dec(payload_len as u64);
+                        hprint("\n\r");
+
+                        snd_handle.write_src(MACS[i]);
+                        snd_handle.write_dest([255,255,255,255,255,255]);
+
+                        snd_handle.write_port(i as u8);
+                        snd_handle.write_eth_type(EthType::ARP);
+                        snd_handle.write_payload_len(payload_len);
+                        snd_handle.dump();
+                        snd_handle.send();
+                        hprint("Start wait\n\r");
+                    }
+
+                    buf_handle.drop();
                 }
-
-                let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
-                hprint("Sent len: ");
-                hprint_dec(payload_len as u64);
-                hprint("\n\r");
-
-                snd_handle.write_src([0,0,0,0,0,4]);
-                snd_handle.write_dest([255,255,255,255,255,255]);
-
-                snd_handle.write_port(4);
-                snd_handle.write_eth_type(EthType::ARP);
-                snd_handle.write_payload_len(payload_len);
-                snd_handle.dump();
-                snd_handle.send();
-                hprint("Start wait\n\r");
-                snd_handle.wait_snd();
-                hprint("Sent\n\r");
             },
             BufState::ForwardMiss => {
                 hprint("Forward miss packet\n\r");
@@ -275,8 +322,14 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn _trap() -> ! {
+pub unsafe extern "C" fn _trap(mepc: u64, mcause: u64, mtval: u64) -> ! {
     hprint("TRAP\n\r");
+    hprint("MEPC: ");
+    hprint_hex_u64(mepc);
+    hprint("\n\rMCAUSE: ");
+    hprint_hex_u64(mcause);
+    hprint("\n\rMTVAL: ");
+    hprint_hex_u64(mtval);
 
     loop {}
 }
