@@ -166,13 +166,8 @@ pub unsafe extern "C" fn _start() -> ! {
 
                         if proto == IPProto::ICMP {
                             hprint("> ICMP\n\r");
-                            buf_handle.dump();
 
                             let tot_size = handle.payload_len();
-
-                            hprint("SIZE: ");
-                            hprint_dec(tot_size as u64);
-                            hprint("\n\r");
 
                             let mut icmp_rd = [0; 128];
                             for i in 0..tot_size {
@@ -181,15 +176,9 @@ pub unsafe extern "C" fn _start() -> ! {
                                 }
                             }
 
-                            hprint("Read: \n\r");
-                            hprint_hex(&icmp_rd);
-
                             let icmp: ICMPHeader::<60> = core::mem::transmute(icmp_rd);
 
-                            hprint("\n\r");
-
                             if icmp.r#type == ICMPType::EchoRequest {
-                                hprint("---\n\r");
                                 // Construct icmp reply
                                 let mut reply = ICMPHeader::<60> {
                                     r#type: ICMPType::EchoReply,
@@ -207,14 +196,10 @@ pub unsafe extern "C" fn _start() -> ! {
                                 let (mut ip, _) = IPv4Handle::allocate(&mut ipbuf[0]);
 
                                 let port = buf_handle.port();
-                                hprint("Port: ");
-                                hprint_dec(port as u64);
                                 snd_handle.write_dest(buf_handle.src());
                                 snd_handle.write_src(MACS[port as usize]);
                                 snd_handle.write_port(port);
-                                hprint("\n\r");
 
-                                hprint("Outgoing\n\r");
                                 ip.outgoing(IPProto::ICMP, tot_size, IPS[port as usize], handle.src());
 
                                 let mut snd_data = snd_handle.data() as *mut u8;
@@ -234,15 +219,10 @@ pub unsafe extern "C" fn _start() -> ! {
                                 }
 
                                 let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
-                                hprint("Response len: ");
-                                hprint_dec(payload_len as u64);
-                                hprint("\n\r");
 
                                 snd_handle.write_eth_type(EthType::IPv4);
                                 snd_handle.write_payload_len(payload_len);
-                                snd_handle.dump();
                                 snd_handle.send();
-                                hprint("Sent\n\r");
                             } else {
                                 hprint("> Unsupported ICMP type\n\r");
                             }
@@ -258,6 +238,7 @@ pub unsafe extern "C" fn _start() -> ! {
                             buf_handle.drop();
                         } else {
                             hprint("> Unknown!\n\r");
+                            buf_handle.dump();
                             buf_handle.drop();
                         }
                     },
@@ -310,9 +291,6 @@ pub unsafe extern "C" fn _start() -> ! {
                         }
 
                         let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
-                        hprint("Sent len: ");
-                        hprint_dec(payload_len as u64);
-                        hprint("\n\r");
 
                         snd_handle.write_src(MACS[i]);
                         snd_handle.write_dest([255,255,255,255,255,255]);
@@ -320,9 +298,7 @@ pub unsafe extern "C" fn _start() -> ! {
                         snd_handle.write_port(i as u8);
                         snd_handle.write_eth_type(EthType::ARP);
                         snd_handle.write_payload_len(payload_len);
-                        snd_handle.dump();
                         snd_handle.send();
-                        hprint("Start wait\n\r");
                     }
 
                     buf_handle.drop();
