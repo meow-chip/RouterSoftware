@@ -18,6 +18,7 @@ mod forward;
 use buf::*;
 use buf::icmp::*;
 use data::arp::*;
+use routing::*;
 use cmd::*;
 
 use util::*;
@@ -55,6 +56,16 @@ pub unsafe extern "C" fn _start() -> ! {
     let mut snd_handle = buf::snd_buf();
 
     let mut ncache = nc::NeighboorCache::default();
+
+    let default_rules = [Rule {
+        prefix: [0,0,0,0],
+        len: 0,
+        next: [255,255,255,255], // Routes to broadcast = ignore
+    }];
+
+    let routing_storage: [Trie; 16384] = [Default::default(); 16384];
+    let mut routing_alloc = TrieBuf::new(routing_storage);
+    let mut routing_table = Trie::from_rules(&mut routing_alloc, &default_rules);
 
     // Initialize
     for vlan in 0..=4 {
@@ -305,6 +316,30 @@ pub unsafe extern "C" fn _start() -> ! {
             },
             BufState::ForwardMiss => {
                 hprint("Forward miss packet\n\r");
+
+                // Asserts to be IP
+                let ptr = buf_handle.data();
+                let dest = unsafe { core::ptr::read(ptr.offset(16) as *const [u8; 4]) };
+
+                match routing_table.lookup(&dest) {
+                    Some(rule) => {
+                        hprint("Found rule: ");
+                        hprint_ip(&dest);
+                        hprint(" -> ");
+                        hprint_ip(&rule);
+                        hprint("\n\r");
+
+                        // TODO: apply rule
+                    },
+                    None => {
+                        hprint("Error! Routing failed: ");
+                        hprint_ip(&dest);
+                        hprint(" -> !\n\r");
+
+                        panic!("Halt");
+                    },
+                }
+
                 buf_handle.drop();
             }
         }

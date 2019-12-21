@@ -89,7 +89,11 @@ impl Trie {
         }
     }
 
-    pub fn lookup(&self, addr: &IPAddr, depth: u8) -> Option<IPAddr> {
+    pub fn lookup(&self, addr: &IPAddr) -> Option<IPAddr> {
+        self.inner_lookup(addr, 0)
+    }
+
+    fn inner_lookup(&self, addr: &IPAddr, depth: u8) -> Option<IPAddr> {
         if depth == 32 {
             return self.value;
         }
@@ -97,7 +101,7 @@ impl Trie {
         let idx = (ip_to_u32(addr) >> (32 - TRIE_BITLEN - depth)) & ((1 << TRIE_BITLEN) - 1);
         // println!("IDX: {}", idx);
         let result = self.next[idx as usize]
-            .and_then(|n| unsafe { n.as_ref() }.lookup(addr, depth+TRIE_BITLEN))
+            .and_then(|n| unsafe { n.as_ref() }.inner_lookup(addr, depth+TRIE_BITLEN))
             .or(self.value.clone());
         result
     }
@@ -109,7 +113,7 @@ pub struct TrieBuf<const LEN: usize> {
 }
 
 impl<const LEN: usize> TrieBuf<{LEN}> {
-    fn from(store: [Trie; LEN]) -> Self {
+    pub fn new(store: [Trie; LEN]) -> Self {
         Self {
             store,
             ptr: 0,
@@ -183,6 +187,6 @@ fn test_routing() {
 
     for (from, to) in cases.iter() {
         println!("Testing from {:?}", from);
-        assert_eq!(trie.lookup(from, 0).as_ref(), Some(to));
+        assert_eq!(trie.lookup(from).as_ref(), Some(to));
     }
 }
