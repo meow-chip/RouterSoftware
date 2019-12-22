@@ -255,8 +255,9 @@ extern "C" {
         return a;
     }
 
-    inline bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output, uint16_t &checksum) {
-        checksum = (uint16_t)read_u32(packet + 10);
+    inline bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output, uint16_t &checksum, uint32_t &ipsrc) {
+        checksum = (uint16_t)read_u32(packet + 26);
+        ipsrc = read_u32(packet + 12);
         if ((len - 32) % 20 != 0) return false;
         output->numEntries = (len - 32) / 20;
         if (output->numEntries > RIP_MAX_ENTRY) return false;
@@ -349,7 +350,8 @@ extern "C" {
 
         RipPacket rip;
         uint16_t checksum;
-        if (disassemble((uint8_t *)packet, length, &rip, checksum)) {
+        uint32_t ipsrc;
+        if (disassemble((uint8_t *)packet, length, &rip, checksum, ipsrc)) {
             if (rip.command == 1) { // receive a request packet
                 RipPacket p;
                 uint32_t res = 0;
@@ -363,13 +365,24 @@ extern "C" {
                 }
                 // TODO: set a flag, wait for response
             } else {  // receive a response packet
-                if ((flag[checksum >> 3] & (1 << (checksum & 7))) && ((checksum ^ (uint16_t)now) & 15) < 13) return 0;
+                if ((flag[checksum >> 3] & (1 << (checksum & 7))) && ((checksum ^ (uint16_t)now) & 15) < 14) return 0;
                 flag[checksum >> 3] |= (1 << (checksum & 7));
                 RipPacket p;
                 p.command = 0x2;
                 p.numEntries = 0;
                 for (int i = 0; i < rip.numEntries; i++) if (rip.entries[i].metric < 16) { // TODO: Poison
                     RoutingTableEntry record = toRoutingTableEntry(&rip.entries[i], if_index);
+
+                    bool defaultRoute =
+                      record.nexthop[0] == 0 &&
+                      record.nexthop[1] == 0 &&
+                      record.nexthop[2] == 0 &&
+                      record.nexthop[3] == 0 ;
+
+                    if(defaultRoute)
+                      for(int i = 0; i<4; ++i)
+                        record.nexthop[i] = ipsrc >> (i * 8);
+
                     if (Meow_Update(true, &record)) {
                         p.entries[p.numEntries++] = {
                             .addr = ip_serialize(record.addr) & len_to_mask(record.len),

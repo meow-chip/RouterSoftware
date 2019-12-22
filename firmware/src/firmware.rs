@@ -115,7 +115,7 @@ pub unsafe extern "C" fn _start() -> ! {
     rule_count = 5;
 
     let mut routing_alloc = TrieBuf::<16384>::new();
-    let mut routing_table = Trie::from_rules(&mut routing_alloc, &rules[0..rule_count]);
+    let mut routing_table = Trie::from_rules(&mut routing_alloc, &mut rules[0..rule_count]);
 
     // Initialize
     for vlan in 0..=4 {
@@ -164,7 +164,11 @@ pub unsafe extern "C" fn _start() -> ! {
                 hprint("\n\r");
 
                 routing_alloc.reset();
-                routing_table = Trie::from_rules(&mut routing_alloc, &rules[0..rule_count]);
+                routing_table = Trie::from_rules(&mut routing_alloc, &mut rules[0..rule_count]);
+
+                hprint("Alloc: ");
+                hprint_dec(routing_alloc.ptr as u64);
+                hprint("\n\r");
 
                 reset_cuckoo();
 
@@ -174,11 +178,9 @@ pub unsafe extern "C" fn _start() -> ! {
 
         // Polls recv buf
         if buf_handle.ptr as u64 != last_cycle {
-            /*
             hprint("Ptr step: ");
             hprint_dec(buf_handle.ptr as u64);
             hprint("\n\r");
-            */
 
             last_cycle = buf_handle.ptr as u64;
         }
@@ -354,7 +356,7 @@ pub unsafe extern "C" fn _start() -> ! {
                 let ptr = buf_handle.data();
                 let dest = unsafe { core::ptr::read(ptr.offset(16) as *const [u8; 4]) };
 
-                if let Some(next_hop) = routing_table.lookup(&dest) {
+                if let Some(next_hop) = unsafe { routing_table.as_ref() }.lookup(&dest) {
                     if let Some(idx) = ncache.lookup(&next_hop) {
                         ncache.write_hardware(idx);
                         let result = ncache.get(idx);
@@ -409,7 +411,7 @@ pub unsafe extern "C" fn _start() -> ! {
                 let ptr = buf_handle.data();
                 let dest = unsafe { core::ptr::read(ptr.offset(16) as *const [u8; 4]) };
 
-                match routing_table.lookup(&dest) {
+                match unsafe { routing_table.as_ref() }.lookup(&dest) {
                     Some(rule) => {
                         hprint("Found rule: ");
                         hprint_ip(&dest);

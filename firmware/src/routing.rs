@@ -46,7 +46,9 @@ impl Trie {
      * Rules should be sorted based on their length
      */
 
-    pub fn from_rules<'a, const LEN: usize>(store: &'a mut TrieBuf<{LEN}>, rules: &[Rule]) -> &'a Trie {
+    pub fn from_rules<'a, const LEN: usize>(store: &'a mut TrieBuf<{LEN}>, rules: &mut [Rule]) -> NonNull<Trie> {
+        rules.sort_unstable_by(|a, b| a.len.cmp(&b.len));
+
         let mut root = store.alloc();
         let root_ref = unsafe { root.as_mut() };
 
@@ -54,7 +56,7 @@ impl Trie {
             root_ref.apply_rule(store, rule, 0);
         }
 
-        unsafe { &*root.as_ptr() }
+        root
     }
 
     fn apply_rule<const LEN: usize>(&mut self, store: &mut TrieBuf<{LEN}>, rule: &Rule, depth: u8) {
@@ -113,7 +115,7 @@ impl Trie {
 
 pub struct TrieBuf<const LEN: usize> {
     store: [Trie; LEN],
-    ptr: usize,
+    pub ptr: usize,
 }
 
 impl<const LEN: usize> TrieBuf<{LEN}> {
@@ -132,7 +134,9 @@ impl<const LEN: usize> TrieBuf<{LEN}> {
         let ret = &mut self.store[self.ptr];
         ret.value = None;
         ret.next = [None; 1 << TRIE_BITLEN];
-        self.ptr += 1;
+        if self.ptr < LEN - 1 {
+            self.ptr += 1;
+        }
         NonNull::new(ret).unwrap()
     }
 }
