@@ -49,6 +49,10 @@ pub enum ParsedBufHandle {
 }
 
 impl BufHandle {
+    pub fn raw(&self) -> *mut u8 {
+        unsafe { core::mem::transmute(BUF_BASE + self.ptr as u64 * BUF_CELL_SIZE) }
+    }
+
     pub fn probe(&self) -> BufState {
         let status_addr = BUF_BASE + (self.ptr as u64 + 1) * BUF_CELL_SIZE - 1;
         unsafe {

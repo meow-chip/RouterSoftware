@@ -16,6 +16,9 @@ target/$(TARGET)/debug/libfirmware.a: $(SRCS) firmware.ld
 env.o: env.S
 	$(PREFIX)as -march=rv64imac -o env.o env.S
 
+rip/rip.o: rip/rip.cpp
+	$(PREFIX)g++ -march=rv64gc -c -nostdlib -o rip/rip.o rip/rip.cpp
+
 firmware.o: target/$(TARGET)/release/libfirmware.a env.o
 	$(PREFIX)ld -T firmware.ld env.o target/$(TARGET)/release/libfirmware.a -o firmware.o
 

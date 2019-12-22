@@ -4,6 +4,7 @@
  */
 
 use crate::cmd::{Cmd, Op};
+use crate::util::*;
 
 const NC_ENT_COUNT: usize = 16;
 const NC_ENT_HW_COUNT: usize = 8;
@@ -75,6 +76,10 @@ impl NeighboorCache {
             }
         }
 
+        hprint("| Writing IP: ");
+        hprint_ip(&self.entries[at].ip);
+        hprint("\n\r");
+
         let ip_cmd = Cmd {
             op: Op::WriteNCEntIP,
             idx: self.nhwptr as u8,
@@ -87,6 +92,12 @@ impl NeighboorCache {
                 0,
             ],
         };
+
+        ip_cmd.send();
+
+        hprint("| Writing MAC: ");
+        hprint_mac(&self.entries[at].mac);
+        hprint("\n\r");
 
         let mac_cmd = Cmd {
             op: Op::WriteNCEntMAC,
@@ -101,6 +112,12 @@ impl NeighboorCache {
             ],
         };
 
+        mac_cmd.send();
+
+        hprint("| Writing port: ");
+        hprint_dec(self.entries[at].port as u64);
+        hprint("\n\r");
+
         let port_cmd = Cmd {
             op: Op::WriteNCEntPort,
             idx: self.nhwptr as u8,
@@ -110,15 +127,14 @@ impl NeighboorCache {
             ],
         };
 
+        port_cmd.send();
+
         let en_cmd = Cmd {
             op: Op::EnableNCEnt,
             idx: self.nhwptr as u8,
             data: [0; 6],
         };
 
-        ip_cmd.send();
-        mac_cmd.send();
-        port_cmd.send();
         en_cmd.send();
 
         self.entries[at].hardware_slot = Some(self.nhwptr);

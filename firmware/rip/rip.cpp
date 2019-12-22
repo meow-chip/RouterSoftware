@@ -6,61 +6,6 @@
 typedef uint32_t in_addr_t;
 typedef uint8_t macaddr_t[6];
 
-#define min(a, b) ((a) < (b) ? a : b)
-
-/**
- * @brief 从 ARP 表中查询 IPv4 对应的 MAC 地址
- *
- * 如果是表中不存在的IP，系统将自动发送 ARP
- * 报文进行查询，待对方主机回应后可重新调用本接口从表中查询 部分后端会限制发送的
- * ARP 报文数量，如每秒向同一个主机最多发送一个 ARP 报文
- *
- * @param if_index IN，接口索引号，[0, N_IFACE_ON_BOARD-1]
- * @param ip IN，要查询的 IP 地址
- * @param o_mac OUT，查询结果 MAC 地址
- * @return int 0 表示成功，非 0 为失败
- */
-int Meow_ArpGetMacAddress(int if_index, in_addr_t ip, macaddr_t o_mac);
-
-/**
- * @brief 接收一个 IP 报文
- *
- * @param packet 实际接收的报文
- * @param length 实际接收的报文长度
- * @param src_mac IPv4 报文下层的来源 MAC 地址
- * @param if_index 实际接收到的报文来源的接口号
- * @return int 0 表示成功，非 0 为失败
- */
-int Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int if_index);
-
-/**
- * @brief 发送一个 IP 报文
- *
- * @param buffer 发送缓冲区
- * @param length 待发送报文的长度
- * @param if_index 实际发送报文的接口号
- * @param dst_mac IPv4 报文下层的目的 MAC 地址
- * @return int 0 表示成功，非 0 为失败
- */
-int Meow_SendIPPacket(uint8_t *buffer, size_t length, int if_index, macaddr_t dst_mac);
-
-/**
- * @brief 定时器过期时触发
- *
- * @param usec IN，当前时刻
- * @return int 0 表示成功，非 0 为失败
- */
-int Meow_PerSec(uint64_t usec);
-
-/**
- * @brief 初始化
- * 
- * @param mem IN，内存池地址
- * @param usec IN，当前时刻
- * @return int 0 表示成功，非 0 为失败
- */
-int Meow_Init(void *mem, uint64_t usec);
-
 in_addr_t multicasting_ip = 0x090000e0;
 macaddr_t multicasting_mac = {0x01, 0, 0x5e, 0, 0, 0x09};
 
@@ -91,16 +36,74 @@ typedef struct {
 } RipPacket;
 
 typedef struct {
-    uint32_t addr;
-    uint32_t len;
-    uint32_t if_index;
-    uint32_t nexthop;
-    uint32_t metric;
+    uint8_t addr[4];
+    uint8_t nexthop[4];
+    uint8_t len;
+    uint8_t metric;
+    uint8_t if_index;
 } RoutingTableEntry;
 
-RoutingTableEntry table[TABLE_MAX_ITEM];
-uint32_t table_num = 0;
+#define min(a, b) ((a) < (b) ? a : b)
 
+/**
+ * @brief 从 ARP 表中查询 IPv4 对应的 MAC 地址
+ *
+ * 如果是表中不存在的IP，系统将自动发送 ARP
+ * 报文进行查询，待对方主机回应后可重新调用本接口从表中查询 部分后端会限制发送的
+ * ARP 报文数量，如每秒向同一个主机最多发送一个 ARP 报文
+ *
+ * @param if_index IN，接口索引号，[0, N_IFACE_ON_BOARD-1]
+ * @param ip IN，要查询的 IP 地址
+ * @param o_mac OUT，查询结果 MAC 地址
+ * @return int 0 表示成功，非 0 为失败
+ */
+uint64_t Meow_ArpGetMacAddress(uint8_t if_index, in_addr_t ip, macaddr_t o_mac);
+
+/**
+ * @brief 接收一个 IP 报文
+ *
+ * @param packet 实际接收的报文
+ * @param length 实际接收的报文长度
+ * @param src_mac IPv4 报文下层的来源 MAC 地址
+ * @param if_index 实际接收到的报文来源的接口号
+ * @return int 0 表示成功，非 0 为失败
+ */
+uint64_t Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, uint8_t if_index);
+
+/**
+ * @brief 发送一个 IP 报文
+ *
+ * @param buffer 发送缓冲区
+ * @param length 待发送报文的长度
+ * @param if_index 实际发送报文的接口号
+ * @param dst_mac IPv4 报文下层的目的 MAC 地址
+ * @return int 0 表示成功，非 0 为失败
+ */
+uint64_t Meow_SendIPPacket(uint8_t *buffer, size_t length, uint8_t if_index, macaddr_t dst_mac);
+
+/**
+ * @brief 定时器过期时触发
+ *
+ * @param usec IN，当前时刻
+ * @return int 0 表示成功，非 0 为失败
+ */
+uint64_t Meow_PerSec(uint64_t usec);
+
+/**
+ * @brief 初始化
+ * 
+ * @param mem IN，内存池地址
+ * @param usec IN，当前时刻
+ * @return int 0 表示成功，非 0 为失败
+ */
+int Meow_Init(void *mem, uint64_t usec);
+
+bool Meow_Update(bool insert, RoutingTableEntry entry);
+
+inline uint32_t ip_serialize(uint8_t ip[4]) {
+    return ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
+} 
+ 
 inline uint16_t change_endian_16(uint16_t a) {
     return ((a & 0xff00) >> 8) + ((a & 0xff) << 8);
 }
@@ -172,77 +175,35 @@ int mask_to_len(uint32_t mask) {
 
 RoutingTableEntry toRoutingTableEntry(RipEntry *p, int if_index) {
     RoutingTableEntry entry = {
-        .addr = p->addr,
-        .len = (uint32_t)mask_to_len(p->mask),
-        .if_index = (uint32_t)if_index,
-        .nexthop = p->nexthop,
-        .metric = p->metric
+        .len = mask_to_len(p->mask),
+        .metric = p->metric,
+        .if_index = if_index,
     };
+
+    for(int i = 0; i< 4; ++i) {
+        entry.addr[i] = p->addr >> (i * 8);
+    }
+
+    for(int i = 0; i< 4; ++i) {
+        entry.nexthop[i] = p->nexthop >> (i * 8);
+    }
+
     return entry;
-}
-
-inline bool update(bool insert, RoutingTableEntry entry) {
-    for (int i = 0; i < table_num; i++) {
-        if (table[i].addr == entry.addr && table[i].len == entry.len) {
-            if (insert) {
-                if (entry.metric < table[i].metric) {
-                    table[i] = entry;
-                } else return false;
-            } else {
-                table[i--] = table[--table_num];
-            }
-            return true;
-        }
-    }
-    if (insert) {
-        table[table_num++] = entry;
-    }
-    return true;
-}
-
-bool query(uint32_t addr, uint32_t *nexthop, uint32_t *if_index) {
-    RoutingTableEntry entry;
-    entry.len = 0;
-    bool fg = false;
-    for (int i = 0; i < table_num; i++) {
-        if ((table[i].addr << (32 - table[i].len)) == (addr << (32 - table[i].len))) {
-        if (table[i].len > entry.len) {
-            entry = table[i];
-            fg = true;
-        }
-        }
-    }
-    *nexthop = entry.nexthop;
-    *if_index = entry.if_index;
-    return fg;
-}
-
-bool forward(uint8_t *packet, size_t len) {
-    if (HeaderChecksum((uint16_t *)packet, len) == false)
-        return false;
-    packet[8] -= 1;
-    uint32_t checksum = 0;
-    for (int i = 0; i < (packet[0] & 0xF) * 2; i++) if (i != 5)
-        checksum += ((uint16_t *)packet)[i];
-    while (checksum >= (1 << 16))
-        checksum = checksum % (1 << 16) + checksum / (1 << 16);
-    ((uint16_t *)packet)[5] = (1 << 16) - 1 - checksum;
-    return true;
 }
 
 inline uint32_t len_to_mask(int len) {
     return (uint32_t)(((uint64_t)(1) << len) - 1);
 }
 
-inline void broadtable(RipPacket *p, int if_index, uint32_t res) {
+inline void broadtable(RipPacket *p, int if_index, uint32_t res, RoutingTableEntry* tbl, uint64_t tblsize) {
     p->command = 0x2;
-    p->numEntries = min(table_num - res, RIP_MAX_ENTRY);
+    p->numEntries = min(tblsize- res, RIP_MAX_ENTRY);
     for (int i = res; i < res + p->numEntries; i++) {
         p->entries[i - res] = {
-            .addr = table[i].addr,
-            .mask = len_to_mask(table[i].len),
-            .nexthop = table[i].nexthop,
-            .metric = (if_index != table[i].if_index ? table[i].metric + 1 : 16)
+            .addr = ip_serialize(tbl[i].addr),
+            .mask = len_to_mask(tbl[i].len),
+            .nexthop = ip_serialize(tbl[i].nexthop),
+            .metric = (if_index != tbl[i].if_index ? tbl[i].metric + 1 : 16)
         };
     }
     res += p->numEntries;
@@ -305,7 +266,7 @@ int Meow_Init(void *pool, uint64_t usec) {
             .nexthop = 0,     // big endian, means direct
             .metric = 0
         };
-        update(true, entry);
+        Meow_Update(true, entry);
     }
     for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
         RipPacket p;
@@ -319,13 +280,13 @@ int Meow_Init(void *pool, uint64_t usec) {
     return 0;
 }
 
-int Meow_PerSec(uint64_t usec) {
+int Meow_PerSec(uint64_t usec, RoutingTableEntry *tbl, uint64_t tblsize) {
     if (now > usec + 5 * 1000) { // timeout
         for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
             RipPacket p;
             uint32_t res = 0;
-            while (res < table_num) {
-                broadtable(&p, i, res);
+            while (res < tblsize) {
+                broadtable(&p, i, res, tbl, tblsize);
                 RIPAssemble(output + 20 + 8, out_len = 0, &p);
                 UDPHeaderAssemble(output + 20, out_len, 520, 520);
                 IPHeaderAssemble(output, out_len, addrs[i], multicasting_ip);
@@ -336,7 +297,7 @@ int Meow_PerSec(uint64_t usec) {
     }
     return 0;
 }
-int Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int if_index) { // legal
+int Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int if_index, RoutingTableEntry *tbl, uint64_t tblsize) { // legal
     // FIXME: IP checksum
     in_addr_t src_addr = *(in_addr_t *)(packet + 12);
     in_addr_t dst_addr = *(in_addr_t *)(packet + 16);
@@ -346,8 +307,8 @@ int Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int 
         if (rip.command == 1) { // receive a request packet
             RipPacket p;
             uint32_t res = 0;
-            while (res < table_num) {
-                broadtable(&p, if_index, res);
+            while (res < tblsize) {
+                broadtable(&p, if_index, res, tbl, tblsize);
                 RIPAssemble(output + 20 + 8, out_len = 0, &p);
                 UDPHeaderAssemble(output + 20, out_len, 520, 520);
                 IPHeaderAssemble(output, out_len, addrs[if_index], src_addr);
@@ -360,11 +321,11 @@ int Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int 
             p.numEntries = 0;
             for (int i = 0; i < rip.numEntries; i++) if (rip.entries[i].metric < 16) { // TODO: Poison
                 RoutingTableEntry record = toRoutingTableEntry(&rip.entries[i], if_index);
-                if (update(true, record)) {
+                if (Meow_Update(true, record)) {
                     p.entries[p.numEntries++] = {
-                        .addr = record.addr & len_to_mask(record.len),
+                        .addr = ip_serialize(record.addr) & len_to_mask(record.len),
                         .mask = len_to_mask(record.len),
-                        .nexthop = record.nexthop,
+                        .nexthop = ip_serialize(record.nexthop),
                         .metric = 16
                     };
                 }

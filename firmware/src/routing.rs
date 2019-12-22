@@ -25,10 +25,14 @@ pub enum RoutingLookup {
     Local,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct Rule {
     pub prefix: IPAddr,
-    pub len: u8,
     pub next: IPAddr,
+    pub len: u8,
+    pub metric: u8,
+    pub if_index: u8,
 }
 
 #[derive(Default, Clone, Copy)]

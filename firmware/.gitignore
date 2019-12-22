@@ -3,3 +3,4 @@ modifier
 firmware.hex
 *.bin
 *.o
+.vscode
