@@ -117,14 +117,14 @@ pub struct TrieBuf<const LEN: usize> {
 }
 
 impl<const LEN: usize> TrieBuf<{LEN}> {
-    pub fn new(store: [Trie; LEN]) -> Self {
+    pub fn new() -> Self {
         Self {
-            store,
+            store: unsafe { core::mem::uninitialized() },
             ptr: 0,
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.ptr = 0;
     }
 

@@ -35,7 +35,7 @@ pub enum EthType {
 
 const BUF_BASE: u64 = 0xFFFF30000000u64;
 const BUF_CELL_SIZE: u64 = 2048;
-const BUF_COUNT: u8 = 8;
+const BUF_COUNT: u8 = 64;
 
 #[derive(Clone, Copy)]
 pub struct BufHandle {

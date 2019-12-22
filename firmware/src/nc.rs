@@ -61,6 +61,10 @@ impl NeighboorCache {
             ip, mac, port,
         };
 
+        hprint("NPTR");
+        hprint_dec(self.nptr as u64);
+        hprint("\n\r");
+
         self.nptr = if self.nptr == NC_ENT_COUNT - 1 {
             0
         } else {
@@ -138,6 +142,10 @@ impl NeighboorCache {
         en_cmd.send();
 
         self.entries[at].hardware_slot = Some(self.nhwptr);
+
+        hprint("NHWPTR");
+        hprint_dec(self.nhwptr as u64);
+        hprint("\n\r");
 
         self.nhwptr = if self.nhwptr == NC_ENT_HW_COUNT-1 {
             0

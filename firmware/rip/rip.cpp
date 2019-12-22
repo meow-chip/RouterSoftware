@@ -13,7 +13,7 @@ macaddr_t multicasting_mac;
 #define TABLE_MAX_ITEM 1000
 #define PACKET_MAX_LENGTH 2048
 
-in_addr_t* addrs; // should know this
+uint32_t addrs[4]; // should know this
 uint32_t N_IFACE_ON_BOARD; // should know this
 
 typedef struct {
@@ -44,6 +44,54 @@ typedef struct {
 } RoutingTableEntry;
 
 #define min(a, b) ((a) < (b) ? a : b)
+
+void hprint_char(char c) {
+    volatile uint8_t * SERIAL_BASE = (uint8_t *) 0xFFFF00000000llu;
+    *(SERIAL_BASE + 0x4) = c;
+    while(true) {
+        uint8_t status = *(SERIAL_BASE + 8);
+        bool fifo_empty = (status & 0b100) != 0;
+
+        if(fifo_empty) {
+            return;
+        }
+    }
+}
+
+void hprint_dec(uint64_t input) {
+    if(input == 0) {
+        hprint_char('0');
+        return;
+    }
+
+    char buf[20];
+    int ptr = 0;
+    while(input) {
+        buf[ptr] = '0' + (input % 10);
+        input /= 10;
+        ++ptr;
+    }
+
+    for(int i = ptr-1; i >= 0; --i) hprint_char(buf[i]);
+}
+
+void hprint(const char *str) {
+    while(*str) hprint_char(*str++);
+}
+
+void write_u32(uint8_t *ptr, uint32_t data) {
+    *ptr = data;
+    *(ptr + 1) = data >> 8;
+    *(ptr + 2) = data >> 16;
+    *(ptr + 3) = data >> 24;
+}
+
+uint32_t read_u32(const uint8_t *ptr) {
+    return *ptr
+        | (*(ptr+1)) << 8
+        | (*(ptr+2)) << 16
+        | (*(ptr+3)) << 24;
+}
 
 extern "C" {
     /**
@@ -85,7 +133,7 @@ extern "C" {
      */
     int Meow_Init(uint64_t usec);
 
-    bool Meow_Update(bool insert, RoutingTableEntry entry);
+    bool Meow_Update(bool insert, RoutingTableEntry *entry);
 
     inline uint32_t ip_serialize(uint8_t ip[4]) {
         return ip[0] | (ip[1] << 8) | (ip[2] << 16) | (ip[3] << 24);
@@ -116,8 +164,8 @@ extern "C" {
         packet[8] = 1; // TTL
         packet[9] = 0x11; // Protocol: UDP:0x11 TCP:0x06 ICMP:0x01
         *(uint16_t *)(packet+10) = 0; // checksum
-        *(uint32_t *)(packet+12) = src; // src ip
-        *(uint32_t *)(packet+16) = dst; // dst ip
+        write_u32(packet+12, src); // src ip
+        write_u32(packet+16, dst); // dst ip
         *(uint16_t *)(packet+10) = HeaderChecksum((uint16_t *)packet, 20 / 2);
     }
 
@@ -140,10 +188,10 @@ extern "C" {
             for (int i = 0; i < rip->numEntries; i++) {
                 *(uint16_t *)(packet + len + 0) = change_endian_16(2); // address family: IP:0x02
                 *(uint16_t *)(packet + len + 2) = change_endian_16(0); // route rag
-                *(uint32_t *)(packet + len + 4) = rip->entries[i].addr; // ip address
-                *(uint32_t *)(packet + len + 8) = rip->entries[i].mask; // mask
-                *(uint32_t *)(packet + len + 12) = rip->entries[i].nexthop; // nexthop
-                *(uint32_t *)(packet + len + 16) = rip->entries[i].metric << 24; // metric
+                write_u32(packet + len + 4, rip->entries[i].addr); // ip address
+                write_u32(packet + len + 8, rip->entries[i].mask); // mask
+                write_u32(packet + len + 12, rip->entries[i].nexthop); // nexthop
+                write_u32(packet + len + 16, rip->entries[i].metric << 24); // metric
                 len += 20;
             }
         }
@@ -182,7 +230,7 @@ extern "C" {
         return (uint32_t)(((uint64_t)(1) << len) - 1);
     }
 
-    inline void broadtable(RipPacket *p, uint8_t if_index, uint32_t res, RoutingTableEntry* tbl, uint64_t tblsize) {
+    inline void broadtable(RipPacket *p, uint8_t if_index, uint32_t &res, RoutingTableEntry* tbl, uint64_t tblsize) {
         p->command = 0x2;
         p->numEntries = min(tblsize- res, RIP_MAX_ENTRY);
         for (uint32_t i = res; i < res + p->numEntries; i++) {
@@ -212,11 +260,11 @@ extern "C" {
         if (packet[28] != 1 && packet[28] != 2) return false;
         if (packet[29] != 2) return false;
         for (int i = 0; i < (len - 32) / 20; i++) {
-            output->entries[i].addr = *(uint32_t *)(packet + 32 + i * 20 + 4);
-            output->entries[i].mask = *(uint32_t *)(packet + 32 + i * 20 + 8);
+            output->entries[i].addr = read_u32(packet + 32 + i * 20 + 4);
+            output->entries[i].mask = read_u32(packet + 32 + i * 20 + 8);
             if (count_bit(output->entries[i].mask + 1) > 1) return false;
-            output->entries[i].nexthop = *(uint32_t *)(packet + 32 + i * 20 + 12);
-            output->entries[i].metric = *(uint32_t *)(packet + 32 + i * 20 + 16);
+            output->entries[i].nexthop = read_u32(packet + 32 + i * 20 + 12);
+            output->entries[i].metric = read_u32(packet + 32 + i * 20 + 16);
             if (output->entries[i].metric & 0xffffff) return false;
             if ((output->entries[i].metric >> 24) < 0x01 ||
                 (output->entries[i].metric >> 24) > 0x10) return false;
@@ -241,8 +289,20 @@ extern "C" {
     uint8_t output[PACKET_MAX_LENGTH];
     uint32_t out_len;
 
-    int Meow_Init(uint64_t usec) {
+    void Meow_AddInterface(uint32_t addr) {
+        addrs[N_IFACE_ON_BOARD] = addr;
 
+        RipPacket p;
+        require(&p);
+        RIPAssemble(output + 20 + 8, out_len = 0, &p);
+        UDPHeaderAssemble(output + 20, out_len, 520, 520);
+        IPHeaderAssemble(output, out_len, addrs[N_IFACE_ON_BOARD], multicasting_ip);
+        Meow_SendIPPacket(output, out_len, N_IFACE_ON_BOARD, multicasting_mac);
+
+        N_IFACE_ON_BOARD++;
+    }
+
+    int Meow_Init(uint64_t usec) {
         now = usec;
 
         multicasting_mac[0] = 0x01;
@@ -252,32 +312,16 @@ extern "C" {
         multicasting_mac[4] = 0x00;
         multicasting_mac[5] = 0x09;
         identification = 0x4c80;
-
-        for (uint8_t i = 0; i < N_IFACE_ON_BOARD;i++) {
-            RoutingTableEntry entry = {
-                // .addr = 0, // big endian
-                // .nexthop = 0,     // big endian, means direct
-                .len = 24,        // small endian
-                .metric = 0,
-                .if_index = i,    // small endian
-            };
-            for (uint8_t j = 0; j < 4; j++) entry.addr[j] = (addrs[j] >> j*8) & 0xff;
-            for (uint8_t j = 0; j < 4; j++) entry.nexthop[j] = 0;
-            Meow_Update(true, entry);
-        }
-        for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
-            RipPacket p;
-            require(&p);
-            RIPAssemble(output + 20 + 8, out_len = 0, &p);
-            UDPHeaderAssemble(output + 20, out_len, 520, 520);
-            IPHeaderAssemble(output, out_len, addrs[i], multicasting_ip);
-            Meow_SendIPPacket(output, out_len, i, multicasting_mac);
-        }
+        N_IFACE_ON_BOARD = 0;
         return 0;
     }
 
     uint64_t Meow_PerSec(uint64_t usec, RoutingTableEntry *tbl, uint64_t tblsize) {
-        if (now > usec + 5 * 1000) { // timeout
+        if (now + 5 * 1000 * 1000 < usec) { // timeout
+            hprint_char('B');
+            hprint_char('\n');
+            hprint_char('\r');
+
             for (int i = 0; i < N_IFACE_ON_BOARD; i++) {
                 RipPacket p;
                 uint32_t res = 0;
@@ -296,8 +340,8 @@ extern "C" {
 
     uint64_t Meow_ReceiveIPPacket(uint8_t *packet, size_t length, macaddr_t src_mac, int if_index, RoutingTableEntry *tbl, uint64_t tblsize) { // legal
         // FIXME: IP checksum
-        in_addr_t src_addr = *(in_addr_t *)(packet + 12);
-        in_addr_t dst_addr = *(in_addr_t *)(packet + 16);
+        in_addr_t src_addr = read_u32(packet + 12);
+        in_addr_t dst_addr = read_u32(packet + 16);
 
         RipPacket rip;
         if (disassemble((uint8_t *)packet, length, &rip)) {
@@ -305,6 +349,7 @@ extern "C" {
                 RipPacket p;
                 uint32_t res = 0;
                 while (res < tblsize) {
+
                     broadtable(&p, if_index, res, tbl, tblsize);
                     RIPAssemble(output + 20 + 8, out_len = 0, &p);
                     UDPHeaderAssemble(output + 20, out_len, 520, 520);
@@ -318,7 +363,7 @@ extern "C" {
                 p.numEntries = 0;
                 for (int i = 0; i < rip.numEntries; i++) if (rip.entries[i].metric < 16) { // TODO: Poison
                     RoutingTableEntry record = toRoutingTableEntry(&rip.entries[i], if_index);
-                    if (Meow_Update(true, record)) {
+                    if (Meow_Update(true, &record)) {
                         p.entries[p.numEntries++] = {
                             .addr = ip_serialize(record.addr) & len_to_mask(record.len),
                             .mask = len_to_mask(record.len),

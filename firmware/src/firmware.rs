@@ -42,6 +42,8 @@ const MACS: [[u8; 6]; 5] = [
     [0x9c, 0xeb, 0, 0, 0, 4],
 ];
 
+const REFRESH_HOLDING_TIME_US: u64 = 5_000_000;
+
 extern "C" {
     #[no_mangle]
     static mut _cuckoo: Cuckoo;
@@ -57,12 +59,16 @@ static mut rule_updated: bool = false;
 #[no_mangle]
 static mut ncache_ptr: *const nc::NeighboorCache = core::ptr::null();
 
-#[cfg(not(test))]
-#[no_mangle]
-pub unsafe extern "C" fn _start() -> ! {
+unsafe fn reset_cuckoo() {
     for i in ((4 << 20) / 8)..((8 << 20) / 8) {
         core::ptr::write_volatile((i*8) as *mut u64, 0);
     }
+}
+
+#[cfg(not(test))]
+#[no_mangle]
+pub unsafe extern "C" fn _start() -> ! {
+    reset_cuckoo();
 
     hprint_setup();
     hprint(BOOTMSG);
@@ -72,26 +78,18 @@ pub unsafe extern "C" fn _start() -> ! {
     hprint_dec(ct);
     hprint("us\n\r");
 
-    // Meow_Init(ct);
-
-    hprint("?");
-
     let mut buf_handle = BufHandle {
         ptr: 1,
     };
-
-    hprint("?");
 
     let mut snd_handle = BufHandle {
         ptr: 0,
     };
 
-    hprint("?");
-
     let mut rules: [Rule; 8192] = core::mem::uninitialized();
     let mut ncache = nc::NeighboorCache::default();
 
-    hprint("?");
+    let mut pending_refresh: Option<u64> = None;
 
     rules_ptr = core::mem::transmute(&rules as *const _);
     ncache_ptr = &ncache;
@@ -108,19 +106,16 @@ pub unsafe extern "C" fn _start() -> ! {
         rules[i as usize+1] = Rule {
             prefix: [192,168,i,0],
             len: 24,
-            next: [192,168,i,1],
+            next: [192,168,i,2],
             metric: 0,
-            if_index: i+1,
+            if_index: i,
         };
     }
 
     rule_count = 5;
 
-    hprint("?");
-    let routing_storage: [Trie; 4096] = [Default::default(); 4096];
-    let mut routing_alloc = TrieBuf::new(routing_storage);
+    let mut routing_alloc = TrieBuf::<16384>::new();
     let mut routing_table = Trie::from_rules(&mut routing_alloc, &rules[0..rule_count]);
-    hprint("!");
 
     // Initialize
     for vlan in 0..=4 {
@@ -147,17 +142,43 @@ pub unsafe extern "C" fn _start() -> ! {
         }.send();
     }
 
+    Meow_Init(ct);
+
+    for i in 1..=4 {
+        let mut addr = 0;
+        for j in 0..4 {
+            addr |= (IPS[i][j] as u32) << (j * 8);
+        }
+        Meow_AddInterface(addr);
+    }
 
     // Main loop
     let mut last_cycle = 0;
     loop {
-        // Meow_PerSec(ct);
+        Meow_PerSec(cur_time(), &rules[0], rule_count as u64);
+
+        if let Some(timeout) = pending_refresh {
+            if timeout < cur_time() {
+                hprint(">>>> Route applying: ");
+                hprint_dec(rule_count as u64);
+                hprint("\n\r");
+
+                routing_alloc.reset();
+                routing_table = Trie::from_rules(&mut routing_alloc, &rules[0..rule_count]);
+
+                reset_cuckoo();
+
+                pending_refresh = None;
+            }
+        }
 
         // Polls recv buf
         if buf_handle.ptr as u64 != last_cycle {
+            /*
             hprint("Ptr step: ");
             hprint_dec(buf_handle.ptr as u64);
             hprint("\n\r");
+            */
 
             last_cycle = buf_handle.ptr as u64;
         }
@@ -189,7 +210,7 @@ pub unsafe extern "C" fn _start() -> ! {
                             Oper::Req => {
                                 let port = buf_handle.port();
 
-                                if ncache.lookup(&arp.tpa).is_none() {
+                                if ncache.lookup(&arp.spa).is_none() {
                                     hprint("ARP cache put:\n\r");
                                     hprint("  ");
                                     hprint_ip(&arp.spa);
@@ -216,7 +237,7 @@ pub unsafe extern "C" fn _start() -> ! {
                         }
                     },
                     ParsedBufHandle::IPv4(handle, body) => {
-                        hprint("IP:\n\r");
+                        // hprint("IP:\n\r");
 
                         let proto = handle.proto();
 
@@ -290,13 +311,23 @@ pub unsafe extern "C" fn _start() -> ! {
                             hprint("> TCP, ignoring\n\r");
                             buf_handle.drop();
                         } else if proto == IPProto::UDP {
-                            hprint("> UDP\n\r");
+                            // hprint("> UDP\n\r");
+                            rule_updated = false;
+
                             Meow_ReceiveIPPacket(
                                 buf_handle.data(),
                                 buf_handle.payload_len() as usize,
                                 &buf_handle.src(),
-                                buf_handle.port(),
+                                buf_handle.port() - 1,
+                                &rules[0],
+                                rule_count as u64,
                             );
+
+                            if rule_updated {
+                                // hprint(">>>> Route Updated\n\r");
+
+                                pending_refresh = Some(cur_time() + REFRESH_HOLDING_TIME_US);
+                            }
 
                             buf_handle.drop();
                         } else {
@@ -323,48 +354,52 @@ pub unsafe extern "C" fn _start() -> ! {
                 let ptr = buf_handle.data();
                 let dest = unsafe { core::ptr::read(ptr.offset(16) as *const [u8; 4]) };
 
-                if let Some(idx) = ncache.lookup(&dest) {
-                    ncache.write_hardware(idx);
-                    let result = ncache.get(idx);
-                    buf_handle.write_dest(result.mac);
-                    buf_handle.write_port(result.port);
-                    buf_handle.send();
-                } else {
-                    for i in 1..=4 {
-                        let arp = ARP {
-                            htype: HType::Eth,
-                            ptype: EthType::IPv4,
-                            hlen: 6,
-                            plen: 4,
-                            op: Oper::Req,
-                            sha: MACS[i],
-                            spa: IPS[i],
-                            tha: [0,0,0,0,0,0],
-                            tpa: dest,
-                        };
+                if let Some(next_hop) = routing_table.lookup(&dest) {
+                    if let Some(idx) = ncache.lookup(&next_hop) {
+                        ncache.write_hardware(idx);
+                        let result = ncache.get(idx);
+                        buf_handle.write_dest(result.mac);
+                        buf_handle.write_port(result.port);
+                        buf_handle.send();
+                    } else {
+                        for i in 1..=4 {
+                            let arp = ARP {
+                                htype: HType::Eth,
+                                ptype: EthType::IPv4,
+                                hlen: 6,
+                                plen: 4,
+                                op: Oper::Req,
+                                sha: MACS[i],
+                                spa: IPS[i],
+                                tha: [0,0,0,0,0,0],
+                                tpa: next_hop,
+                            };
 
-                        let mut snd_data = snd_handle.data() as *mut u8;
-                        let snd_data_origin = snd_data;
+                            let mut snd_data = snd_handle.data() as *mut u8;
+                            let snd_data_origin = snd_data;
 
-                        let buf: [u8; core::mem::size_of::<ARP>()] = core::mem::transmute(arp);
+                            let buf: [u8; core::mem::size_of::<ARP>()] = core::mem::transmute(arp);
 
-                        for i in buf.iter() {
-                            core::ptr::write_volatile(snd_data, *i);
-                            snd_data = snd_data.offset(1);
+                            for i in buf.iter() {
+                                core::ptr::write_volatile(snd_data, *i);
+                                snd_data = snd_data.offset(1);
+                            }
+
+                            let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
+
+                            snd_handle.write_src(MACS[i]);
+                            snd_handle.write_dest([255,255,255,255,255,255]);
+
+                            snd_handle.write_port(i as u8);
+                            snd_handle.write_eth_type(EthType::ARP);
+                            snd_handle.write_payload_len(payload_len);
+                            snd_handle.send();
                         }
 
-                        let payload_len = (snd_data as usize - snd_data_origin as usize) as u16;
-
-                        snd_handle.write_src(MACS[i]);
-                        snd_handle.write_dest([255,255,255,255,255,255]);
-
-                        snd_handle.write_port(i as u8);
-                        snd_handle.write_eth_type(EthType::ARP);
-                        snd_handle.write_payload_len(payload_len);
-                        snd_handle.send();
+                        buf_handle.drop();
                     }
-
-                    buf_handle.drop();
+                } else {
+                    // Ignores race
                 }
             },
             BufState::ForwardMiss => {
@@ -393,7 +428,7 @@ pub unsafe extern "C" fn _start() -> ! {
                                 rule[2],
                                 rule[1],
                                 rule[0],
-                            ]) {
+                            ], true) {
                                 hprint("Cuckoo write failed.");
                             }
                         }
@@ -443,7 +478,23 @@ pub extern "C" fn abort() -> ! {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn Meow_Update(insert: bool, r: routing::Rule) -> bool {
+pub unsafe extern "C" fn Meow_Update(insert: bool, r: *const routing::Rule) -> bool {
+    let r = *r;
+
+    /*
+    hprint("Updating Rule:\n\r");
+    hprint_ip(&r.prefix);
+    hprint("/");
+    hprint_dec(r.len as u64);
+    hprint(" -> ");
+    hprint_ip(&r.next);
+    hprint(" @ ");
+    hprint_dec(r.if_index as u64);
+    hprint(" ^ ");
+    hprint_dec(r.metric as u64);
+    hprint("\n\r");
+    */
+
     for idx in 0..rule_count {
         if (*rules_ptr)[idx].prefix == r.prefix && (*rules_ptr)[idx].len == r.len {
             if insert {
@@ -484,25 +535,34 @@ pub unsafe extern "C" fn Meow_ArpGetMacAddress(if_index: u8, ip: u32, ret: &mut 
     }
 }
 
+
 #[no_mangle]
-pub unsafe extern "C" fn Meow_SendIPPacket(buffer: *const u8, length: usize, if_index: u8, dst_mac: &[u8; 6]) -> usize {
+pub unsafe extern "C" fn Meow_SendIPPacket(buffer: *const u8, length: usize, if_index: u8, dst_mac: *const [u8; 6]) -> usize {
+    /*
+    hprint("len: ");
+    hprint_dec(length as u64);
+    hprint("\n\r");
+    */
+
     // Write directly into snd_buf
     let mut buf = buf::snd_buf();
 
     let ptr = buf.data();
 
     core::ptr::copy_nonoverlapping(buffer, ptr, length);
+    buf.write_eth_type(EthType::IPv4);
     buf.write_payload_len(length as u16);
     buf.write_src(MACS[if_index as usize]);
     buf.write_dest(*dst_mac);
-    buf.write_port(if_index);
+    buf.write_port(if_index + 1);
     buf.send();
 
     0
 }
 
 extern "C" {
-    fn Meow_ReceiveIPPacket(packet: *const u8, length: usize, src_mac: &[u8; 6], if_index: u8) -> u64;
+    fn Meow_ReceiveIPPacket(packet: *const u8, length: usize, src_mac: &[u8; 6], if_index: u8, tbl: *const Rule, count: u64) -> u64;
     fn Meow_Init(usec: u64) -> u64;
-    fn Meow_PerSec(usec: u64) -> u64;
+    fn Meow_PerSec(usec: u64, tbl: *const Rule, count: u64) -> u64;
+    fn Meow_AddInterface(addr: u32);
 }
