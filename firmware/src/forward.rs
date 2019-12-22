@@ -80,6 +80,9 @@ pub struct Cuckoo {
     rows: [Row; ROWS_NUM as usize],
 }
 
+// used for cuckoo to decide which key should be kicked out
+static mut KICK: u8 = 0;
+
 impl Cuckoo {
     pub fn new() -> Self {
         // assert rows num is the power of 2
@@ -100,7 +103,8 @@ impl Cuckoo {
     /// Inserts a (k, v) pair into the table.
     /// If the key is already in the table, it will replace it with the new value.
     /// The k cannot be zero ([0, 0, 0, 0]) since Cuckoo uses the zero as the invalid key internally.
-    pub fn insert(&mut self, k: &IPAddr, v: &IPAddr) -> Result<(), ()> {
+    /// If setting the random_evict to true, then it will evict a random key to when there are not empty slots.
+    pub fn insert(&mut self, k: &IPAddr, v: &IPAddr, random_evict: bool) -> Result<(), ()> {
         assert_ne!(k, &[0, 0, 0, 0]);
         let (row_id1, row_id2) = Cuckoo::row_ids(k);
 
@@ -128,6 +132,26 @@ impl Cuckoo {
                 return Ok(());
             }
         }
+
+        if random_evict {
+            // self.rows[rid].keys[slot_id] will be kicked out
+            let (rid, slot_id) = unsafe {
+                KICK = (KICK + 1) & 7; // (KICK + ) % 8;
+                let rid = if KICK <= 3 {
+                    row_id1
+                } else {
+                    row_id2
+                };
+                let slot_id = (KICK & 3) as usize;
+                (rid, slot_id)
+            };
+
+
+            self.rows[rid].keys[slot_id] = *k;
+            self.rows[rid].values[slot_id] = *v;
+            return Ok(());
+        }
+
         Err(())
     }
 
@@ -202,7 +226,7 @@ fn test_cuckoo() -> Result<(), ()> {
 
     // insert them
     for (from, to) in &cases {
-        c.insert(from, to)?;
+        c.insert(from, to, false)?;
     }
 
     // lookup them
@@ -234,13 +258,18 @@ mod tests {
     fn test_cuckoo_modifiying() -> Result<(), ()> {
         let mut c = Cuckoo::new();
     
-        c.insert(&[192, 168, 1, 23], &[192, 168, 1, 1])?;
-        c.insert(&[192, 168, 1, 23], &[10, 1, 1, 1])?;
+        c.insert(&[192, 168, 1, 23], &[192, 168, 1, 1], false)?;
+        c.insert(&[192, 168, 1, 23], &[10, 1, 1, 1], false)?;
         assert_eq!(c.lookup(&[192, 168, 1, 23]).unwrap(), [10, 1, 1, 1]);
     
         Ok(())
     }
-    
+
+    fn gen_ipaddr() -> IPAddr {
+        let mut rng = rand::thread_rng();
+        [rng.gen::<u8>(), rng.gen::<u8>(), rng.gen::<u8>(), rng.gen::<u8>()]
+    }
+
     #[test]
     fn test_utlizaiont_rate() -> Result<(), ()> {
         // the table can store 0.8 * ROWS_NUM * 4 keys
@@ -250,31 +279,44 @@ mod tests {
         let mut c = Cuckoo::new();
         let mut kvs = Vec::<(IPAddr, IPAddr)>::with_capacity(key_cnt);
         let mut keys = HashSet::<IPAddr>::new();
-        
-        let gen_ipaddr = | | -> IPAddr {
-            let mut rng = rand::thread_rng();
-            [rng.gen::<u8>(), rng.gen::<u8>(), rng.gen::<u8>(), rng.gen::<u8>()]
-        };
-        
-        // insert
+    
+        // insert to check if the Cuckoo can achieve 80% utilization rate 
         for _ in 0..key_cnt {
             loop {
                 let k = gen_ipaddr();
                 let v = gen_ipaddr();
                 // to ensure there are not duplicate keys
                 if !keys.contains(&k) && k != [0, 0, 0, 0] {
-                    c.insert(&k, &v)?;
+                    c.insert(&k, &v, false)?;
                     keys.insert(k);
                     kvs.push((k, v));
                     break;
                 }
             }
         }
-
-        // check
         for (from, to) in &kvs {
             assert_eq!(c.lookup(from).unwrap(), *to);
         }
+
+        // check if keep inserting, will the random_evict works
+        for _ in 0..key_cnt {
+            loop {
+                let k = gen_ipaddr();
+                let v = gen_ipaddr();
+                // to ensure there are not duplicate keys
+                if !keys.contains(&k) && k != [0, 0, 0, 0] {
+                    c.insert(&k, &v, true)?;
+                    keys.insert(k);
+                    assert_eq!(c.lookup(&k).unwrap(), v);
+                    kvs.push((k, v));
+                    break;
+                }
+            }
+        }
+        let keys_in_cuckoo: usize = kvs.iter().map(|(k, _)| {
+            c.lookup(&k).is_some() as usize
+        }).sum();
+        assert!(keys_in_cuckoo > key_cnt + 10);
     
         Ok(())
     }
