@@ -28,10 +28,10 @@ static BOOTMSG: &'static str = "BOOT\n\rHello, MeowRouter!\n\r";
 
 const IPS: [[u8; 4]; 5] = [
     [10, 0, 0, 1],
-    [10, 0, 1, 1],
-    [10, 0, 2, 1],
-    [10, 0, 3, 1],
-    [10, 0, 4, 1],
+    [192, 168, 0, 1],
+    [192, 168, 1, 1],
+    [192, 168, 2, 1],
+    [192, 168, 3, 1],
 ];
 
 const MACS: [[u8; 6]; 5] = [
@@ -60,20 +60,38 @@ static mut ncache_ptr: *const nc::NeighboorCache = core::ptr::null();
 #[cfg(not(test))]
 #[no_mangle]
 pub unsafe extern "C" fn _start() -> ! {
-    /*
-    for i in 0..(8 << 20) {
-        core::ptr::write_volatile(i as *mut u8, 0);
+    for i in ((4 << 20) / 8)..((8 << 20) / 8) {
+        core::ptr::write_volatile((i*8) as *mut u64, 0);
     }
-    */
 
-    // hprint_setup();
-    // hprint(BOOTMSG);
+    hprint_setup();
+    hprint(BOOTMSG);
 
-    let mut buf_handle = buf::rst_buf();
-    let mut snd_handle = buf::snd_buf();
+    let ct = cur_time();
+    hprint("Cur time: ");
+    hprint_dec(ct);
+    hprint("us\n\r");
+
+    // Meow_Init(ct);
+
+    hprint("?");
+
+    let mut buf_handle = BufHandle {
+        ptr: 1,
+    };
+
+    hprint("?");
+
+    let mut snd_handle = BufHandle {
+        ptr: 0,
+    };
+
+    hprint("?");
 
     let mut rules: [Rule; 8192] = core::mem::uninitialized();
     let mut ncache = nc::NeighboorCache::default();
+
+    hprint("?");
 
     rules_ptr = core::mem::transmute(&rules as *const _);
     ncache_ptr = &ncache;
@@ -86,26 +104,23 @@ pub unsafe extern "C" fn _start() -> ! {
         if_index: 0,
     };
 
-    rules[1] = Rule {
-        prefix: [10,0,3,0],
-        len: 24,
-        next: [10,0,3,2], // Routes to broadcast = ignore
-        metric: 0,
-        if_index: 1,
-    };
+    for i in 0..4u8 {
+        rules[i as usize+1] = Rule {
+            prefix: [192,168,i,0],
+            len: 24,
+            next: [192,168,i,1],
+            metric: 0,
+            if_index: i+1,
+        };
+    }
 
-    rules[2] = Rule {
-        prefix: [10,0,4,0],
-        len: 24,
-        next: [10,0,4,2], // Routes to broadcast = ignore
-        metric: 0,
-        if_index: 1,
-    };
-    rule_count = 3;
+    rule_count = 5;
 
+    hprint("?");
     let routing_storage: [Trie; 4096] = [Default::default(); 4096];
     let mut routing_alloc = TrieBuf::new(routing_storage);
     let mut routing_table = Trie::from_rules(&mut routing_alloc, &rules[0..rule_count]);
+    hprint("!");
 
     // Initialize
     for vlan in 0..=4 {
@@ -132,9 +147,12 @@ pub unsafe extern "C" fn _start() -> ! {
         }.send();
     }
 
+
     // Main loop
     let mut last_cycle = 0;
     loop {
+        // Meow_PerSec(ct);
+
         // Polls recv buf
         if buf_handle.ptr as u64 != last_cycle {
             hprint("Ptr step: ");
@@ -266,13 +284,20 @@ pub unsafe extern "C" fn _start() -> ! {
                             }
                             buf_handle.drop();
                         } else if proto == IPProto::IGMP {
-                            hprint("> IGMP\n\r");
+                            hprint("> IGMP, ignoring\n\r");
                             buf_handle.drop();
                         } else if proto == IPProto::TCP {
-                            hprint("> TCP\n\r");
+                            hprint("> TCP, ignoring\n\r");
                             buf_handle.drop();
                         } else if proto == IPProto::UDP {
                             hprint("> UDP\n\r");
+                            Meow_ReceiveIPPacket(
+                                buf_handle.data(),
+                                buf_handle.payload_len() as usize,
+                                &buf_handle.src(),
+                                buf_handle.port(),
+                            );
+
                             buf_handle.drop();
                         } else {
                             hprint("> Unknown!\n\r");
@@ -464,10 +489,13 @@ pub unsafe extern "C" fn Meow_SendIPPacket(buffer: *const u8, length: usize, if_
     // Write directly into snd_buf
     let mut buf = buf::snd_buf();
 
-    let ptr = buf.raw();
+    let ptr = buf.data();
 
     core::ptr::copy_nonoverlapping(buffer, ptr, length);
-    buf.write_payload_len(length as u16 - 18);
+    buf.write_payload_len(length as u16);
+    buf.write_src(MACS[if_index as usize]);
+    buf.write_dest(*dst_mac);
+    buf.write_port(if_index);
     buf.send();
 
     0
@@ -475,5 +503,6 @@ pub unsafe extern "C" fn Meow_SendIPPacket(buffer: *const u8, length: usize, if_
 
 extern "C" {
     fn Meow_ReceiveIPPacket(packet: *const u8, length: usize, src_mac: &[u8; 6], if_index: u8) -> u64;
+    fn Meow_Init(usec: u64) -> u64;
     fn Meow_PerSec(usec: u64) -> u64;
 }

@@ -1,6 +1,7 @@
 // const FREQ: u64 = 50_000_000;
 
 const SERIAL_BASE: usize = 0xFFFF00000000;
+const CLOCK_FREQ: u64 = 50;
 
 pub fn hprint_setup() {
     // TODO: enable interrupt
@@ -99,4 +100,8 @@ pub fn hprint_ip(s: &[u8; 4]) {
     }
 
     hprint_dec(s[3] as u64);
+}
+
+pub fn cur_time() -> u64 {
+    riscv::register::mcycle::read64() / CLOCK_FREQ
 }

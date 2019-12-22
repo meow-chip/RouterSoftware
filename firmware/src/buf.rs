@@ -182,6 +182,13 @@ impl BufHandle {
             core::ptr::write_volatile(len_addr as *mut u16, len + 18)
         };
     }
+
+    pub fn payload_len(&mut self) -> u16 {
+        let len_addr = BUF_BASE + (self.ptr as u64 + 1) * BUF_CELL_SIZE - 4;
+        unsafe {
+            core::ptr::read_volatile(len_addr as *const u16) - 18
+        }
+    }
 }
 
 pub fn rst_buf() -> BufHandle {
