@@ -69,10 +69,6 @@ pub unsafe extern "C" fn _start() -> ! {
     // hprint_setup();
     // hprint(BOOTMSG);
 
-    _cuckoo.insert(&[4,3,2,1], &[1,2,3,4]);
-    _cuckoo.insert(&[5,6,7,8], &[8,7,6,5]);
-    _cuckoo.insert(&[1,0,1,0], &[0,1,0,1]);
-
     let mut buf_handle = buf::rst_buf();
     let mut snd_handle = buf::snd_buf();
 
@@ -89,7 +85,23 @@ pub unsafe extern "C" fn _start() -> ! {
         metric: 0,
         if_index: 0,
     };
-    rule_count = 1;
+
+    rules[1] = Rule {
+        prefix: [10,0,3,0],
+        len: 24,
+        next: [10,0,3,2], // Routes to broadcast = ignore
+        metric: 0,
+        if_index: 1,
+    };
+
+    rules[2] = Rule {
+        prefix: [10,0,4,0],
+        len: 24,
+        next: [10,0,4,2], // Routes to broadcast = ignore
+        metric: 0,
+        if_index: 1,
+    };
+    rule_count = 3;
 
     let routing_storage: [Trie; 4096] = [Default::default(); 4096];
     let mut routing_alloc = TrieBuf::new(routing_storage);

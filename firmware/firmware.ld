@@ -19,6 +19,15 @@ SECTIONS {
     *.(.rodata .rodata.*);
   } > FLASH
 
+  .data : {
+    . = 0x0;
+    *.(.sdata .sdata.*);
+  } > RAM
+
+  .bss : {
+    *.(.sbss .sbss.*);
+  } > RAM
+
   /DISCARD/ : {
     *(.debug_* .debug_*.*);
     *(.comment .comment.*);
