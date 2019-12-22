@@ -9,6 +9,8 @@ typedef uint8_t macaddr_t[6];
 const in_addr_t multicasting_ip = 0x090000e0;
 macaddr_t multicasting_mac;
 
+uint8_t flag[8192];
+
 #define RIP_MAX_ENTRY 25
 #define TABLE_MAX_ITEM 1000
 #define PACKET_MAX_LENGTH 2048
@@ -253,7 +255,8 @@ extern "C" {
         return a;
     }
 
-    inline bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output) {
+    inline bool disassemble(const uint8_t *packet, uint32_t len, RipPacket *output, uint16_t &checksum) {
+        checksum = (uint16_t)read_u32(packet + 10);
         if ((len - 32) % 20 != 0) return false;
         output->numEntries = (len - 32) / 20;
         if (output->numEntries > RIP_MAX_ENTRY) return false;
@@ -313,6 +316,7 @@ extern "C" {
         multicasting_mac[5] = 0x09;
         identification = 0x4c80;
         N_IFACE_ON_BOARD = 0;
+        for (uint i = 0; i < 8192; i++) flag[i] = (uint8_t)0;
         return 0;
     }
 
@@ -344,7 +348,8 @@ extern "C" {
         in_addr_t dst_addr = read_u32(packet + 16);
 
         RipPacket rip;
-        if (disassemble((uint8_t *)packet, length, &rip)) {
+        uint16_t checksum;
+        if (disassemble((uint8_t *)packet, length, &rip, checksum)) {
             if (rip.command == 1) { // receive a request packet
                 RipPacket p;
                 uint32_t res = 0;
@@ -358,6 +363,8 @@ extern "C" {
                 }
                 // TODO: set a flag, wait for response
             } else {  // receive a response packet
+                if ((flag[checksum >> 3] & (1 << (checksum & 7))) && ((checksum ^ (uint16_t)now) & 15) < 13) return 0;
+                flag[checksum >> 3] |= (1 << (checksum & 7));
                 RipPacket p;
                 p.command = 0x2;
                 p.numEntries = 0;
